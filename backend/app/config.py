@@ -1,0 +1,46 @@
+"""Configuration settings for Market Wizard."""
+
+from functools import lru_cache
+from pathlib import Path
+from typing import Literal
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Get absolute path to .env file in backend directory
+BACKEND_DIR = Path(__file__).parent.parent
+ENV_FILE = BACKEND_DIR / ".env"
+
+
+class Settings(BaseSettings):
+    """Application settings loaded from environment variables."""
+
+    model_config = SettingsConfigDict(
+        env_file=str(ENV_FILE),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # API Keys
+    google_api_key: str = ""
+    openai_api_key: str = ""
+
+    # LLM Settings
+    llm_model: str = "gemini-2.0-flash-001"
+    llm_temperature: float = 0.5
+
+    # Embedding Settings
+    embedding_provider: Literal["local", "openai"] = "local"
+    embedding_model: str = "BAAI/bge-m3"
+
+    # Database
+    database_url: str = "sqlite+aiosqlite:///./market_wizard.db"
+
+    # GUS API
+    gus_api_key: str = ""
+    gus_api_base_url: str = "https://bdl.stat.gov.pl/api/v1"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Get cached settings instance."""
+    return Settings()
