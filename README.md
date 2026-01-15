@@ -64,6 +64,7 @@ Otwórz: **http://localhost:7860**
 | 📊 **Symulacja SSR** | Estymacja intencji zakupu dla grupy docelowej |
 | 🔬 **Test A/B** | Porównanie dwóch wariantów produktu |
 | 💰 **Analiza cenowa** | Krzywa popytu i elastyczność cenowa |
+| 🎯 **Focus Group** | Wirtualne grupy fokusowe z dyskusją multi-agent |
 | 👥 **Dane GUS** | Realistyczne rozkłady demograficzne Polski |
 | 📄 **Raporty HTML** | Pełne raporty z wykresami i wszystkimi odpowiedziami |
 
@@ -82,6 +83,7 @@ Market_wizard/
 │   │       ├── embedding_client.py  # BGE-M3 embeddingi
 │   │       ├── persona_manager.py   # Generator person + GUS
 │   │       ├── simulation_engine.py # Orchestrator
+│   │       ├── focus_group_engine.py # Focus Groups
 │   │       └── report_generator.py  # Raporty HTML
 │   ├── .env                         # Zmienne środowiskowe
 │   └── pyproject.toml

@@ -26,7 +26,7 @@ if backend_path not in sys.path:
 
 # Now import from backend app package
 from app.models import DemographicProfile
-from app.services import SimulationEngine, ABTestEngine, PriceSensitivityEngine
+from app.services import SimulationEngine, ABTestEngine, PriceSensitivityEngine, FocusGroupEngine
 from app.services.report_generator import generate_html_report, save_report
 from app.i18n import Language, get_label
 
@@ -460,6 +460,69 @@ def run_price_analysis(*args):
     return asyncio.run(run_price_analysis_async(*args))
 
 
+# === Focus Group Functions ===
+
+
+async def run_focus_group_async(
+    lang_code: str,
+    product: str,
+    n_participants: int,
+    n_rounds: int,
+) -> tuple[str, str, str]:
+    """Run virtual focus group discussion."""
+    lang = get_lang(lang_code)
+    
+    if not product or not product.strip():
+        error_msg = "❌ Enter product description" if lang == Language.EN else "❌ Wprowadź opis produktu"
+        return "", "", error_msg
+    
+    try:
+        engine = FocusGroupEngine(language=lang)
+        
+        # Run focus group
+        result = await engine.run_focus_group(
+            product_description=product.strip(),
+            n_participants=int(n_participants),
+            n_rounds=int(n_rounds),
+        )
+        
+        # Format discussion transcript
+        transcript = ""
+        current_round = 0
+        for msg in result.discussion:
+            if msg.round != current_round:
+                current_round = msg.round
+                if lang == Language.PL:
+                    transcript += f"\n### 📢 Runda {current_round}\n\n"
+                else:
+                    transcript += f"\n### 📢 Round {current_round}\n\n"
+            
+            transcript += f"**{msg.persona_name}** ({msg.persona_demographics}):\n"
+            transcript += f"> {msg.content}\n\n"
+        
+        # Format summary
+        summary = f"## 📋 {'Moderator Summary' if lang == Language.EN else 'Podsumowanie moderatora'}\n\n"
+        summary += result.summary
+        
+        if lang == Language.PL:
+            status = f"✅ Zakończono! {len(result.participants)} uczestników, {n_rounds} rund"
+        else:
+            status = f"✅ Complete! {len(result.participants)} participants, {n_rounds} rounds"
+        
+        return transcript, summary, status
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        error_msg = f"❌ Error: {str(e)}" if lang == Language.EN else f"❌ Błąd: {str(e)}"
+        return "", "", error_msg
+
+
+def run_focus_group(*args):
+    """Wrapper for async focus group."""
+    return asyncio.run(run_focus_group_async(*args))
+
+
 # === Build Gradio Interface ===
 
 
@@ -637,7 +700,58 @@ def create_interface():
                     outputs=[price_result, price_chart, price_status],
                 )
 
-            # === Tab 4: About ===
+            # === Tab 4: Focus Group ===
+            with gr.TabItem("🎯 Focus Group / Grupa fokusowa"):
+                gr.Markdown("### Virtual Focus Group / Wirtualna grupa fokusowa")
+                gr.Markdown("*Multi-agent discussion about your product / Dyskusja wielu agentów o Twoim produkcie*")
+                
+                with gr.Row():
+                    with gr.Column(scale=2):
+                        fg_product = gr.Textbox(
+                            label="Product description / Opis produktu",
+                            placeholder="Describe your product...",
+                            lines=3,
+                        )
+                    with gr.Column(scale=1):
+                        fg_participants = gr.Slider(
+                            label="Participants / Uczestnicy",
+                            minimum=4,
+                            maximum=8,
+                            value=6,
+                            step=1,
+                        )
+                        fg_rounds = gr.Slider(
+                            label="Discussion rounds / Rundy dyskusji",
+                            minimum=2,
+                            maximum=4,
+                            value=3,
+                            step=1,
+                        )
+                
+                fg_status = gr.Markdown("*Ready / Gotowe*")
+                fg_run_btn = gr.Button("🎯 Start Focus Group / Rozpocznij dyskusję", variant="primary")
+                
+                with gr.Row():
+                    with gr.Column():
+                        gr.Markdown("### 💬 Discussion Transcript / Transkrypcja")
+                        fg_transcript = gr.Markdown(
+                            value="",
+                            label="Transcript",
+                        )
+                    with gr.Column():
+                        gr.Markdown("### 📋 Moderator Summary / Podsumowanie")
+                        fg_summary = gr.Markdown(
+                            value="",
+                            label="Summary",
+                        )
+                
+                fg_run_btn.click(
+                    fn=run_focus_group,
+                    inputs=[language_select, fg_product, fg_participants, fg_rounds],
+                    outputs=[fg_transcript, fg_summary, fg_status],
+                )
+
+            # === Tab 5: About ===
             with gr.TabItem("ℹ️ About / O metodologii"):
                 gr.Markdown(
                     """

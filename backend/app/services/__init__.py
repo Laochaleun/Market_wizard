@@ -19,10 +19,18 @@ from app.services.simulation_engine import (
     SimulationEngine,
 )
 from app.services.ssr_engine import SSREngine, SSRResult
+from app.services.focus_group_engine import (
+    FocusGroupEngine,
+    FocusGroupMessage,
+    FocusGroupResult,
+)
 
 __all__ = [
     "ABTestEngine",
     "EmbeddingClient",
+    "FocusGroupEngine",
+    "FocusGroupMessage",
+    "FocusGroupResult",
     "GeminiClient",
     "LLMClient",
     "LocalEmbeddingClient",
@@ -36,3 +44,4 @@ __all__ = [
     "get_embedding_client",
     "get_llm_client",
 ]
+
