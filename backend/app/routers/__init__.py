@@ -1,5 +1,5 @@
 """Routers package."""
 
-from app.routers import simulations
+from app.routers import simulations, projects
 
-__all__ = ["simulations"]
+__all__ = ["simulations", "projects"]

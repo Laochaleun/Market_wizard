@@ -24,6 +24,7 @@ from app.services.focus_group_engine import (
     FocusGroupMessage,
     FocusGroupResult,
 )
+from app.services.project_store import ProjectStore
 
 __all__ = [
     "ABTestEngine",
@@ -38,10 +39,10 @@ __all__ = [
     "OpenAIEmbeddingClient",
     "PersonaManager",
     "PriceSensitivityEngine",
+    "ProjectStore",
     "SimulationEngine",
     "SSREngine",
     "SSRResult",
     "get_embedding_client",
     "get_llm_client",
 ]
-

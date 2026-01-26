@@ -40,23 +40,33 @@ class SimulationEngine:
         ssr_engine: SSREngine | None = None,
         persona_manager: PersonaManager | None = None,
         model_override: str | None = None,
+
+
         language: Language = Language.PL,
+        temperature: float = 0.01,
     ):
         self.language = language
         self.llm_client = llm_client or get_llm_client(model_override)
-        self.ssr_engine = ssr_engine or SSREngine(language=language)
+        self.ssr_engine = ssr_engine or SSREngine(language=language, temperature=temperature)
         self.persona_manager = persona_manager or PersonaManager(language=language)
 
     async def _generate_opinion_for_persona(
         self,
         persona: Persona,
         product_description: str,
-    ) -> tuple[Persona, str]:
-        """Generate opinion for a single persona. Returns (persona, opinion)."""
-        opinion = await self.llm_client.generate_opinion(
-            persona, product_description, language=self.language
-        )
-        return persona, opinion
+        enable_web_search: bool = False,
+    ) -> tuple[Persona, str, list[str]]:
+        """Generate opinion for a single persona. Returns (persona, opinion, sources)."""
+        if enable_web_search and hasattr(self.llm_client, 'generate_opinion_with_search'):
+            opinion, sources = await self.llm_client.generate_opinion_with_search(
+                persona, product_description, language=self.language
+            )
+        else:
+            opinion = await self.llm_client.generate_opinion(
+                persona, product_description, language=self.language
+            )
+            sources = []
+        return persona, opinion, sources
 
     async def run_simulation(
         self,
@@ -65,6 +75,7 @@ class SimulationEngine:
         target_audience: DemographicProfile | None = None,
         n_agents: int = 100,
         concurrency_limit: int = 10,
+        enable_web_search: bool = False,
     ) -> SimulationResult:
         """
         Run a complete simulation.
@@ -75,6 +86,7 @@ class SimulationEngine:
             target_audience: Demographic profile constraints
             n_agents: Number of synthetic consumers
             concurrency_limit: Max concurrent LLM requests
+            enable_web_search: Enable Google Search grounding for market research
             
         Returns:
             SimulationResult with aggregate and individual results
@@ -86,40 +98,42 @@ class SimulationEngine:
         )
 
         # Step 2: Generate opinions with concurrency control
-        opinions: List[tuple[Persona, str]] = []
+        opinions: List[tuple[Persona, str, list[str]]] = []
         semaphore = asyncio.Semaphore(concurrency_limit)
 
-        async def generate_with_limit(persona: Persona) -> tuple[Persona, str]:
+        async def generate_with_limit(persona: Persona) -> tuple[Persona, str, list[str]]:
             async with semaphore:
                 return await self._generate_opinion_for_persona(
-                    persona, product_description
+                    persona, product_description, enable_web_search
                 )
 
         tasks = [generate_with_limit(p) for p in personas]
         opinions = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Filter out failed generations (exceptions)
-        valid_opinions: List[tuple[Persona, str]] = []
+        valid_opinions: List[tuple[Persona, str, list[str]]] = []
+        all_sources: List[str] = []
         for result in opinions:
             if isinstance(result, Exception):
                 # Log error but continue
                 print(f"⚠️ LLM error: {result}")
                 continue
-            if isinstance(result, tuple) and len(result) == 2:
-                persona, opinion = result
+            if isinstance(result, tuple) and len(result) == 3:
+                persona, opinion, sources = result
                 if isinstance(opinion, str) and opinion:
-                    valid_opinions.append((persona, opinion))
+                    valid_opinions.append((persona, opinion, sources))
+                    all_sources.extend(sources)
 
         if not valid_opinions:
             raise RuntimeError("Wszystkie zapytania do LLM zakończyły się błędem")
 
         # Step 3: Rate opinions using SSR
-        text_responses = [o for _, o in valid_opinions]
+        text_responses = [o for _, o, _ in valid_opinions]
         ssr_results: List[SSRResult] = self.ssr_engine.rate_responses(text_responses)
 
         # Step 4: Build agent responses
         agent_responses: List[AgentResponse] = []
-        for (persona, _), ssr_result in zip(valid_opinions, ssr_results):
+        for (persona, _, _), ssr_result in zip(valid_opinions, ssr_results):
             agent_responses.append(
                 AgentResponse(
                     persona=persona,
@@ -141,6 +155,7 @@ class SimulationEngine:
             aggregate_distribution=aggregate_pmf,
             mean_purchase_intent=mean_purchase_intent,
             agent_responses=agent_responses,
+            web_sources=list(set(all_sources)),  # Deduplicate sources
             created_at=datetime.now(),
         )
 

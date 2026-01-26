@@ -123,6 +123,7 @@ class SimulationResult(BaseModel):
     aggregate_distribution: LikertDistribution
     mean_purchase_intent: float
     agent_responses: list[AgentResponse]
+    web_sources: list[str] = Field(default_factory=list, description="URLs used for market research")
     created_at: datetime = Field(default_factory=datetime.now)
 
 

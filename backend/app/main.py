@@ -60,6 +60,7 @@ async def root():
 
 
 # Import and include routers
-from app.routers import simulations
+from app.routers import simulations, projects
 
 app.include_router(simulations.router, prefix="/api/v1", tags=["simulations"])
+app.include_router(projects.router, prefix="/api/v1", tags=["projects"])

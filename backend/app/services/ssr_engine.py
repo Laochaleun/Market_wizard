@@ -41,7 +41,7 @@ class SSREngine:
         embedding_client: EmbeddingClient | None = None,
         anchor_sets: List[Dict[int, str]] | None = None,
         language: Language = Language.PL,
-        temperature: float = 1.0,
+        temperature: float = 0.01,
         epsilon: float = 0.0,
     ):
         """
