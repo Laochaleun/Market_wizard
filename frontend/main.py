@@ -681,10 +681,11 @@ async def run_simulation_async(
     
     if not product_description.strip():
         err = get_label(lang, "error_no_product")
-        return None, err, "", err
+        return None, err, "", err, gr.update(), ""
 
     progress(0, desc="Initializing..." if lang == Language.EN else "Inicjalizacja...")
     url_status_msg = ""
+    extracted_preview = ""
 
     try:
         # Process product input - extract from URL if needed
@@ -692,8 +693,9 @@ async def run_simulation_async(
             progress(0.05, desc="🔗 Fetching product from URL..." if lang == Language.EN else "🔗 Pobieranie produktu z URL...")
             product_description, url_status = await process_product_input(product_description, lang)
             url_status_msg = url_status or ""
+            extracted_preview = product_description
             if not product_description:
-                return None, "Could not extract product from URL", "", "❌"
+                return None, "Could not extract product from URL", "", "❌", gr.update(), ""
         # Handle language-specific "All" values
         all_value = "All" if lang == Language.EN else "Wszystkie"
         
@@ -770,7 +772,13 @@ async def run_simulation_async(
         if url_status_msg:
             status_msg = f"{status_msg} • {url_status_msg}"
 
-        return chart_df, summary, opinions, status_msg, dirty_value
+        if extracted_preview:
+            if lang == Language.PL:
+                extracted_preview = f"**Wyciągnięte dane:** {extracted_preview}"
+            else:
+                extracted_preview = f"**Extracted data:** {extracted_preview}"
+
+        return chart_df, summary, opinions, status_msg, dirty_value, extracted_preview
 
     except Exception as e:
         import traceback
@@ -781,6 +789,7 @@ async def run_simulation_async(
             "",
             f"❌ {str(e)}",
             gr.update(),
+            "",
         )
 
 
@@ -1711,6 +1720,7 @@ def create_interface():
                             placeholder="E.g. Activated charcoal toothpaste, 75ml, price $9.99",
                             lines=5,
                         )
+                        extracted_product_preview = gr.Markdown("")
 
                         gr.Markdown("### Target Audience / Grupa docelowa")
                         with gr.Row():
@@ -1807,7 +1817,14 @@ def create_interface():
                         temperature,
                         project_state,
                     ],
-                    outputs=[chart_output, summary_output, opinions_output, status, project_dirty],
+                    outputs=[
+                        chart_output,
+                        summary_output,
+                        opinions_output,
+                        status,
+                        project_dirty,
+                        extracted_product_preview,
+                    ],
                 )
 
                 report_btn.click(
