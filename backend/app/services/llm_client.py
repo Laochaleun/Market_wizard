@@ -185,7 +185,7 @@ Answer naturally, as in conversation. Mention specific products and prices you f
         url: str,
         language: Language = Language.PL,
     ) -> str:
-        """Extract product description from a shop URL using Gemini URL Context.
+        """Extract product description from a shop URL using hybrid fetch + Gemini fallback.
         
         Args:
             url: URL of the product page
@@ -194,9 +194,15 @@ Answer naturally, as in conversation. Mention specific products and prices you f
         Returns:
             Extracted product description
         """
-        from google.genai import types
         import asyncio
+        from google.genai import types
+        from app.services.product_extractor import extract_product_description
         
+        # Try direct extraction first (HTTP + optional Playwright)
+        extracted = await extract_product_description(url, language.value)
+        if extracted:
+            return extracted
+
         if language == Language.PL:
             prompt = f"""Przeanalizuj stronę produktu: {url}
 

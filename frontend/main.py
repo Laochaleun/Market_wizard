@@ -583,6 +583,46 @@ async def process_product_input(
     """
     product_input = product_input.strip()
     
+    def _looks_like_full_extraction(text: str) -> bool:
+        text = text.strip()
+        if not text:
+            return False
+        if len(text) < 60:
+            return False
+        if len(text.split()) < 8:
+            return False
+        if not any(ch.isdigit() for ch in text):
+            return False
+        lowered = text.lower()
+        currency_markers = ["pln", "zł", "zl", "usd", "eur", "$", "€", "cena", "price"]
+        if not any(marker in lowered for marker in currency_markers):
+            return False
+        if "." not in text and "," not in text:
+            return False
+        return True
+
+    def _attach_source(text: str, url: str) -> str:
+        label = "Źródło" if language == Language.PL else "Source"
+        text = text.strip()
+        if not text:
+            return f"{label}: {url}"
+        if f"{label}: {url}" in text:
+            return text
+        return f"{text} {label}: {url}"
+
+    def _fallback_from_url(url: str) -> str:
+        from urllib.parse import urlparse, unquote
+
+        parsed = urlparse(url)
+        slug = parsed.path.rstrip("/").split("/")[-1]
+        slug = unquote(slug)
+        slug = slug.replace("-", " ").replace("_", " ").strip()
+        if not slug:
+            slug = "produkt z podanego URL" if language == Language.PL else "product from provided URL"
+        if language == Language.PL:
+            return f"{slug}. Opis na podstawie URL (brak pełnej ekstrakcji)."
+        return f"{slug}. Description based on URL (full extraction unavailable)."
+
     if is_url(product_input):
         # Extract product from URL using Gemini
         from app.services.llm_client import get_llm_client
@@ -592,10 +632,29 @@ async def process_product_input(
             if hasattr(client, 'extract_product_from_url'):
                 status = "🔗 Extracting product from URL..." if language == Language.EN else "🔗 Pobieranie produktu z URL..."
                 product_description = await client.extract_product_from_url(product_input, language)
-                return product_description, f"✅ Extracted from: {product_input}"
+                if _looks_like_full_extraction(product_description):
+                    product_description = _attach_source(product_description, product_input)
+                    return product_description, f"✅ Extracted from: {product_input}"
+                fallback = _fallback_from_url(product_input)
+                fallback = _attach_source(fallback, product_input)
+                warn = (
+                    "⚠️ Extraction too short; using URL fallback."
+                    if language == Language.EN
+                    else "⚠️ Ekstrakcja zbyt krótka — używam opisu na podstawie URL."
+                )
+                return fallback, warn
+            fallback = _attach_source(_fallback_from_url(product_input), product_input)
+            warn = (
+                "⚠️ URL extraction unavailable; using URL fallback."
+                if language == Language.EN
+                else "⚠️ Ekstrakcja z URL niedostępna — używam opisu na podstawie URL."
+            )
+            return fallback, warn
         except Exception as e:
             # Fallback to using URL as-is
-            return product_input, f"⚠️ Could not fetch URL: {e}"
+            fallback = _fallback_from_url(product_input)
+            fallback = _attach_source(fallback, product_input)
+            return fallback, f"⚠️ Could not fetch URL: {e}"
     
     return product_input, ""
 
@@ -625,12 +684,14 @@ async def run_simulation_async(
         return None, err, "", err
 
     progress(0, desc="Initializing..." if lang == Language.EN else "Inicjalizacja...")
+    url_status_msg = ""
 
     try:
         # Process product input - extract from URL if needed
         if is_url(product_description.strip()):
             progress(0.05, desc="🔗 Fetching product from URL..." if lang == Language.EN else "🔗 Pobieranie produktu z URL...")
             product_description, url_status = await process_product_input(product_description, lang)
+            url_status_msg = url_status or ""
             if not product_description:
                 return None, "Could not extract product from URL", "", "❌"
         # Handle language-specific "All" values
@@ -706,6 +767,8 @@ async def run_simulation_async(
         if autosave_msg:
             status_msg = f"{status_msg} • {autosave_msg}"
             dirty_value = False
+        if url_status_msg:
+            status_msg = f"{status_msg} • {url_status_msg}"
 
         return chart_df, summary, opinions, status_msg, dirty_value
 
