@@ -25,6 +25,98 @@ def _truncate_sentences(text: str, max_sentences: int = 2) -> str:
     return " ".join(parts[:max_sentences]).strip()
 
 
+def _dedupe_lines(lines: list[str]) -> list[str]:
+    seen = set()
+    out = []
+    for line in lines:
+        norm = line.lower()
+        if norm in seen:
+            continue
+        seen.add(norm)
+        out.append(line)
+    return out
+
+
+def _collect_description_blocks(soup: BeautifulSoup) -> str:
+    selectors = [
+        "[itemprop='description']",
+        ".product-description",
+        ".product__description",
+        ".woocommerce-Tabs-panel--description",
+        "#description",
+        ".description",
+        ".product-desc",
+        ".product-details__description",
+    ]
+    blocks: list[str] = []
+    for sel in selectors:
+        for el in soup.select(sel):
+            text = _clean_text(el.get_text(" ", strip=True))
+            if text and len(text.split()) >= 5:
+                blocks.append(text)
+
+    blocks = _dedupe_lines(blocks)
+    return " ".join(blocks).strip()
+
+
+def _collect_specs(soup: BeautifulSoup) -> list[tuple[str, str]]:
+    specs: list[tuple[str, str]] = []
+
+    # Table-based specs
+    for table in soup.find_all("table"):
+        class_attr = " ".join(table.get("class", []))
+        if class_attr and not any(x in class_attr.lower() for x in ["spec", "param", "product", "data", "attributes"]):
+            continue
+        for row in table.find_all("tr"):
+            cells = row.find_all(["th", "td"])
+            if len(cells) < 2:
+                continue
+            key = _clean_text(cells[0].get_text(" ", strip=True))
+            value = _clean_text(cells[-1].get_text(" ", strip=True))
+            if key and value and key != value:
+                specs.append((key, value))
+
+    # Definition list specs
+    for dl in soup.find_all("dl"):
+        class_attr = " ".join(dl.get("class", []))
+        if class_attr and not any(x in class_attr.lower() for x in ["spec", "param", "product", "data", "attributes"]):
+            continue
+        dts = dl.find_all("dt")
+        dds = dl.find_all("dd")
+        for dt, dd in zip(dts, dds):
+            key = _clean_text(dt.get_text(" ", strip=True))
+            value = _clean_text(dd.get_text(" ", strip=True))
+            if key and value and key != value:
+                specs.append((key, value))
+
+    # List-based specs (e.g., features lists)
+    for ul in soup.find_all(["ul", "ol"]):
+        class_attr = " ".join(ul.get("class", []))
+        if class_attr and not any(x in class_attr.lower() for x in ["spec", "param", "feature", "attributes"]):
+            continue
+        items = [ _clean_text(li.get_text(" ", strip=True)) for li in ul.find_all("li") ]
+        for item in items:
+            if not item:
+                continue
+            if ":" in item:
+                parts = item.split(":", 1)
+                key = _clean_text(parts[0])
+                value = _clean_text(parts[1])
+                if key and value:
+                    specs.append((key, value))
+
+    # Dedupe specs
+    seen = set()
+    deduped = []
+    for key, value in specs:
+        norm = f"{key.lower()}::{value.lower()}"
+        if norm in seen:
+            continue
+        seen.add(norm)
+        deduped.append((key, value))
+    return deduped
+
+
 def _extract_json_ld(html: str) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
     soup = BeautifulSoup(html, "lxml")
@@ -91,7 +183,7 @@ def _build_description(
     brand = _clean_text(brand or "")
     price = _clean_text(price or "")
     currency = _clean_text(currency or "")
-    features = _truncate_sentences(_clean_text(features or ""))
+    features = _truncate_sentences(_clean_text(features or ""), max_sentences=6)
 
     if language.lower().startswith("pl"):
         parts = []
@@ -144,6 +236,9 @@ def _extract_from_html(html: str, url: str, language: str) -> str:
         description = product.get("description")
         price, currency = _extract_price_from_ld(product)
 
+    specs = _collect_specs(soup)
+    desc_blocks = _collect_description_blocks(soup)
+
     # Fallbacks
     if not description:
         meta_desc = soup.find("meta", attrs={"name": "description"})
@@ -161,7 +256,11 @@ def _extract_from_html(html: str, url: str, language: str) -> str:
         text_blob = soup.get_text(" ", strip=True)
         price, currency = _extract_price_from_text(text_blob)
 
-    return _build_description(
+    # Prefer longer, page-specific description blocks when available.
+    if desc_blocks and len(desc_blocks) > len(description or ""):
+        description = desc_blocks
+
+    base_desc = _build_description(
         name=name,
         brand=brand,
         price=price,
@@ -169,6 +268,20 @@ def _extract_from_html(html: str, url: str, language: str) -> str:
         features=description,
         language=language,
     )
+    base_desc = base_desc.strip()
+
+    # Add specs if available
+    if specs:
+        spec_items = []
+        for key, value in specs[:12]:
+            spec_items.append(f"{key}: {value}")
+        specs_text = "; ".join(spec_items)
+        if language.lower().startswith("pl"):
+            base_desc = f"{base_desc} Parametry: {specs_text}."
+        else:
+            base_desc = f"{base_desc} Specifications: {specs_text}."
+
+    return base_desc.strip()
 
 
 async def _fetch_html_httpx(url: str) -> str:

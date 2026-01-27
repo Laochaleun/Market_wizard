@@ -572,6 +572,19 @@ def is_url(text: str) -> bool:
     return bool(url_pattern.match(text.strip()))
 
 
+def _shorten_extracted(text: str, lang: Language) -> str:
+    text = (text or "").strip()
+    if not text:
+        return ""
+    # Keep a short, readable preview.
+    max_chars = 320
+    if len(text) <= max_chars:
+        return text
+    shortened = text[: max_chars - 1].rsplit(" ", 1)[0].strip()
+    suffix = "…" if lang == Language.PL else "…"
+    return f"{shortened}{suffix}"
+
+
 async def process_product_input(
     product_input: str,
     language: Language,
@@ -686,6 +699,7 @@ async def run_simulation_async(
     progress(0, desc="Initializing..." if lang == Language.EN else "Inicjalizacja...")
     url_status_msg = ""
     extracted_preview = ""
+    extracted_full = ""
 
     try:
         # Process product input - extract from URL if needed
@@ -693,9 +707,10 @@ async def run_simulation_async(
             progress(0.05, desc="🔗 Fetching product from URL..." if lang == Language.EN else "🔗 Pobieranie produktu z URL...")
             product_description, url_status = await process_product_input(product_description, lang)
             url_status_msg = url_status or ""
-            extracted_preview = product_description
+            extracted_full = product_description
+            extracted_preview = _shorten_extracted(product_description, lang)
             if not product_description:
-                return None, "Could not extract product from URL", "", "❌", gr.update(), ""
+                return None, "Could not extract product from URL", "", "❌", gr.update(), "", ""
         # Handle language-specific "All" values
         all_value = "All" if lang == Language.EN else "Wszystkie"
         
@@ -778,7 +793,21 @@ async def run_simulation_async(
             else:
                 extracted_preview = f"**Extracted data:** {extracted_preview}"
 
-        return chart_df, summary, opinions, status_msg, dirty_value, extracted_preview
+        if extracted_full:
+            if lang == Language.PL:
+                extracted_full = f"**Pełny opis:** {extracted_full}"
+            else:
+                extracted_full = f"**Full description:** {extracted_full}"
+
+        return (
+            chart_df,
+            summary,
+            opinions,
+            status_msg,
+            dirty_value,
+            extracted_preview,
+            extracted_full,
+        )
 
     except Exception as e:
         import traceback
@@ -789,6 +818,7 @@ async def run_simulation_async(
             "",
             f"❌ {str(e)}",
             gr.update(),
+            "",
             "",
         )
 
@@ -1721,6 +1751,8 @@ def create_interface():
                             lines=5,
                         )
                         extracted_product_preview = gr.Markdown("")
+                        with gr.Accordion("📄 Extracted details / Wyciągnięte dane", open=False):
+                            extracted_product_full = gr.Markdown("")
 
                         gr.Markdown("### Target Audience / Grupa docelowa")
                         with gr.Row():
@@ -1824,6 +1856,7 @@ def create_interface():
                         status,
                         project_dirty,
                         extracted_product_preview,
+                        extracted_product_full,
                     ],
                 )
 
