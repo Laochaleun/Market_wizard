@@ -44,11 +44,13 @@ class SimulationEngine:
 
         language: Language = Language.PL,
         temperature: float = 0.01,
+        llm_temperature: float | None = None,
     ):
         self.language = language
         self.llm_client = llm_client or get_llm_client(model_override)
         self.ssr_engine = ssr_engine or SSREngine(language=language, temperature=temperature)
         self.persona_manager = persona_manager or PersonaManager(language=language)
+        self.llm_temperature = llm_temperature
 
     async def _generate_opinion_for_persona(
         self,
@@ -59,11 +61,17 @@ class SimulationEngine:
         """Generate opinion for a single persona. Returns (persona, opinion, sources)."""
         if enable_web_search and hasattr(self.llm_client, 'generate_opinion_with_search'):
             opinion, sources = await self.llm_client.generate_opinion_with_search(
-                persona, product_description, language=self.language
+                persona,
+                product_description,
+                language=self.language,
+                temperature=self.llm_temperature,
             )
         else:
             opinion = await self.llm_client.generate_opinion(
-                persona, product_description, language=self.language
+                persona,
+                product_description,
+                language=self.language,
+                temperature=self.llm_temperature,
             )
             sources = []
         return persona, opinion, sources
@@ -76,6 +84,7 @@ class SimulationEngine:
         n_agents: int = 100,
         concurrency_limit: int = 10,
         enable_web_search: bool = False,
+        personas: List[Persona] | None = None,
     ) -> SimulationResult:
         """
         Run a complete simulation.
@@ -91,11 +100,14 @@ class SimulationEngine:
         Returns:
             SimulationResult with aggregate and individual results
         """
-        # Step 1: Generate personas
-        personas = self.persona_manager.generate_population(
-            profile=target_audience,
-            n_agents=n_agents,
-        )
+        # Step 1: Generate personas (unless provided)
+        if personas is None:
+            personas = self.persona_manager.generate_population(
+                profile=target_audience,
+                n_agents=n_agents,
+            )
+        else:
+            n_agents = len(personas)
 
         # Step 2: Generate opinions with concurrency control
         opinions: List[tuple[Persona, str, list[str]]] = []
@@ -203,11 +215,13 @@ class ABTestEngine:
                 project_id=project_id,
                 product_description=variant_a,
                 n_agents=n_agents,
+                personas=personas,
             ),
             self.simulation_engine.run_simulation(
                 project_id=project_id,
                 product_description=variant_b,
                 n_agents=n_agents,
+                personas=personas,
             ),
         )
 
@@ -250,7 +264,10 @@ class PriceSensitivityEngine:
         simulation_engine: SimulationEngine | None = None,
         language: Language = Language.PL,
     ):
-        self.simulation_engine = simulation_engine or SimulationEngine(language=language)
+        self.simulation_engine = simulation_engine or SimulationEngine(
+            language=language,
+            llm_temperature=0.2,
+        )
 
     async def analyze_price_sensitivity(
         self,
@@ -265,7 +282,36 @@ class PriceSensitivityEngine:
         
         Returns a demand curve mapping price to purchase intent.
         """
+        import hashlib
+        import json
+        import random
+        import numpy as np
+
         results = {}
+
+        # Stable persona seed for repeatability (based on inputs).
+        seed_payload = {
+            "product": base_product_description,
+            "prices": [round(p, 2) for p in price_points],
+            "n_agents": n_agents,
+            "target": target_audience.model_dump() if target_audience else None,
+        }
+        seed_raw = json.dumps(seed_payload, sort_keys=True)
+        seed = int(hashlib.md5(seed_raw.encode("utf-8")).hexdigest()[:8], 16)
+
+        # Preserve RNG state to avoid affecting other runs.
+        rand_state = random.getstate()
+        np_state = np.random.get_state()
+        random.seed(seed)
+        np.random.seed(seed)
+        try:
+            personas = self.simulation_engine.persona_manager.generate_population(
+                profile=target_audience,
+                n_agents=n_agents,
+            )
+        finally:
+            random.setstate(rand_state)
+            np.random.set_state(np_state)
 
         for price in price_points:
             # Inject price into product description
@@ -276,6 +322,7 @@ class PriceSensitivityEngine:
                 product_description=product_with_price,
                 target_audience=target_audience,
                 n_agents=n_agents,
+                personas=personas,
             )
 
             results[price] = {
@@ -302,4 +349,5 @@ class PriceSensitivityEngine:
             "demand_curve": results,
             "elasticities": elasticities,
             "optimal_price": max(results.keys(), key=lambda p: results[p]["mean_purchase_intent"]),
+            "seed": seed,
         }

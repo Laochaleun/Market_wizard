@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # GUS API
     gus_api_key: str = ""
     gus_api_base_url: str = "https://bdl.stat.gov.pl/api/v1"
+    gus_use_live: bool = True
+    gus_cache_ttl_hours: int = 24
+    gus_unit_id_poland: str = "000000000000"
+    gus_income_net_ratio: float = 0.72
 
 
 @lru_cache

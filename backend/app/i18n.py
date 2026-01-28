@@ -276,7 +276,7 @@ UI_LABELS: Dict[Language, Dict[str, str]] = {
         "distribution": "Rozkład odpowiedzi",
         "scale_1": "Zdecydowanie NIE",
         "scale_2": "Raczej nie",
-        "scale_3": "Neutralny",
+        "scale_3": "Ani tak, ani nie",
         "scale_4": "Raczej tak",
         "scale_5": "Zdecydowanie TAK",
         "opinions_title": "📝 Przykładowe opinie agentów",

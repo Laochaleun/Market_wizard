@@ -5,7 +5,12 @@ Supports demographic stratification and optional integration with
 GUS (Główny Urząd Statystyczny) BDL API for real Polish demographics.
 """
 
+import json
+import logging
 import random
+import re
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Optional
 
 import httpx
@@ -36,8 +41,12 @@ EDUCATION_LEVELS = {
 }
 
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+
 class GUSClient:
-    """Client for GUS BDL API to fetch real demographic data."""
+    """Client for GUS BDL API to fetch demographic data (with caching)."""
 
     BASE_URL = "https://bdl.stat.gov.pl/api/v1"
     
@@ -76,26 +85,329 @@ class GUSClient:
 
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or get_settings().gus_api_key
+        self.base_url = get_settings().gus_api_base_url.rstrip("/")
         self.headers = {"Accept": "application/json"}
         if self.api_key:
             self.headers["X-ClientId"] = self.api_key
+        self.cache_ttl = timedelta(hours=get_settings().gus_cache_ttl_hours)
+        self.unit_id_poland = get_settings().gus_unit_id_poland
+        self._live_loaded = False
+        self._live_age_groups: list[tuple[int, int | None, int]] = []
+        self._live_gender_distribution: dict[str, float] | None = None
+        self._live_location_distribution: dict[str, float] | None = None
+        self._live_income_mean: float | None = None
+        self._cache_path = Path(__file__).resolve().parents[2] / "data" / "gus_cache.json"
+        self._income_net_ratio = max(0.5, min(1.0, get_settings().gus_income_net_ratio))
+
+    def _request(self, path: str, params: dict | None = None) -> dict:
+        url = f"{self.base_url}{path}"
+        resp = httpx.get(url, params=params, headers=self.headers, timeout=15.0)
+        resp.raise_for_status()
+        return resp.json()
+
+    def _get_items(self, payload: dict) -> list[dict]:
+        if isinstance(payload, dict):
+            if "results" in payload and isinstance(payload["results"], list):
+                return payload["results"]
+            if "data" in payload and isinstance(payload["data"], list):
+                return payload["data"]
+        return []
+
+    def _cache_valid(self) -> bool:
+        if not self._cache_path.exists():
+            return False
+        try:
+            raw = json.loads(self._cache_path.read_text(encoding="utf-8"))
+            ts = raw.get("timestamp")
+            if not ts:
+                return False
+            cached_at = datetime.fromisoformat(ts)
+        except Exception:
+            return False
+        return datetime.now() - cached_at <= self.cache_ttl
+
+    def _load_cache(self) -> bool:
+        if not self._cache_valid():
+            return False
+        try:
+            raw = json.loads(self._cache_path.read_text(encoding="utf-8"))
+            self._live_age_groups = raw.get("age_groups", [])
+            self._live_gender_distribution = raw.get("gender_distribution")
+            self._live_location_distribution = raw.get("location_distribution")
+            self._live_income_mean = raw.get("income_mean")
+            return True
+        except Exception:
+            return False
+
+    def _save_cache(self) -> None:
+        data = {
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "age_groups": self._live_age_groups,
+            "gender_distribution": self._live_gender_distribution,
+            "location_distribution": self._live_location_distribution,
+            "income_mean": self._live_income_mean,
+        }
+        self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self._cache_path.write_text(json.dumps(data, ensure_ascii=True, indent=2), encoding="utf-8")
+
+    def _ensure_live_loaded(self) -> None:
+        if self._live_loaded:
+            return
+        settings = get_settings()
+        if not settings.gus_use_live:
+            logger.info("GUS live disabled; using default distributions.")
+            self._live_loaded = True
+            return
+        if self._load_cache():
+            logger.info("GUS live data loaded from cache.")
+            if self._live_income_mean:
+                logger.info("GUS income mean loaded: %.2f", self._live_income_mean)
+            self._live_loaded = True
+            return
+        try:
+            self._fetch_live_data()
+            self._save_cache()
+            logger.info("GUS live data fetched and cached.")
+            if self._live_income_mean:
+                logger.info("GUS income mean loaded: %.2f", self._live_income_mean)
+        except Exception:
+            # Fall back to defaults silently
+            logger.info("GUS live fetch failed; using default distributions.")
+            pass
+        self._live_loaded = True
+
+    def _find_subject_id(self, query: str, must_have: list[str] | None = None) -> str | None:
+        payload = self._request("/subjects/search", {"name": query})
+        items = self._get_items(payload)
+        if must_have:
+            for item in items:
+                name = (item.get("name") or "").lower()
+                if all(token in name for token in must_have):
+                    return item.get("id")
+        return items[0].get("id") if items else None
+
+    def _list_variables(self, subject_id: str) -> list[dict]:
+        variables: list[dict] = []
+        page = 0
+        while True:
+            payload = self._request(
+                "/variables",
+                {"subject-id": subject_id, "page": page, "pageSize": 100},
+            )
+            items = self._get_items(payload)
+            if not items:
+                break
+            variables.extend(items)
+            page += 1
+        return variables
+
+    def _variable_label(self, item: dict) -> str:
+        if item.get("name"):
+            return str(item["name"])
+        parts = [item.get(k) for k in ["n1", "n2", "n3", "n4", "n5"] if item.get(k)]
+        return " ".join([str(p) for p in parts])
+
+    def _fetch_data_for_variables(self, variable_ids: list[str]) -> list[dict]:
+        data: list[dict] = []
+        for var_id in variable_ids:
+            payload = self._request(f"/data/by-unit/{self.unit_id_poland}", {"var-id": var_id})
+            data.extend(self._get_items(payload))
+        # Keep only latest year per variable if year info present
+        by_var: dict[str, dict] = {}
+        for item in data:
+            var_id = str(item.get("variableId") or item.get("id") or "")
+            year = item.get("year") or item.get("yearId") or 0
+            try:
+                year = int(year)
+            except Exception:
+                year = 0
+            prev = by_var.get(var_id)
+            if not prev or year >= int(prev.get("year") or prev.get("yearId") or 0):
+                by_var[var_id] = item
+        return list(by_var.values())
+        return data
+
+    def _parse_age_groups(self, variables: list[dict]) -> list[tuple[int, int | None, int]]:
+        age_groups: list[tuple[int, int | None, int]] = []
+        variable_ids = []
+        var_map = {}
+        for item in variables:
+            label = self._variable_label(item)
+            if "wiek" not in label.lower():
+                continue
+            if "ogółem" not in label.lower():
+                continue
+            var_id = str(item.get("id"))
+            variable_ids.append(var_id)
+            var_map[var_id] = label
+
+        if not variable_ids:
+            return age_groups
+
+        data = self._fetch_data_for_variables(variable_ids)
+        for item in data:
+            var_id = str(item.get("variableId") or item.get("id") or "")
+            value = item.get("val") or item.get("value")
+            if value is None:
+                continue
+            label = var_map.get(var_id, "")
+            match = re.search(r"(\\d{1,2})\\s*[–-]\\s*(\\d{1,2})", label)
+            if match:
+                min_age = int(match.group(1))
+                max_age = int(match.group(2))
+                age_groups.append((min_age, max_age, int(value)))
+                continue
+            if "i więcej" in label.lower() or "+" in label:
+                match = re.search(r"(\\d{1,2})", label)
+                if match:
+                    min_age = int(match.group(1))
+                    age_groups.append((min_age, None, int(value)))
+
+        return age_groups
+
+    def _parse_gender_distribution(self, variables: list[dict]) -> dict[str, float] | None:
+        variable_ids = []
+        var_map = {}
+        for item in variables:
+            label = self._variable_label(item).lower()
+            if "płeć" not in label and "plec" not in label:
+                continue
+            if "ogółem" in label:
+                continue
+            if "mężczyźni" in label or "kobiety" in label:
+                var_id = str(item.get("id"))
+                variable_ids.append(var_id)
+                var_map[var_id] = label
+
+        if not variable_ids:
+            return None
+
+        data = self._fetch_data_for_variables(variable_ids)
+        male = female = 0
+        for item in data:
+            var_id = str(item.get("variableId") or item.get("id") or "")
+            value = item.get("val") or item.get("value") or 0
+            label = var_map.get(var_id, "")
+            if "mężczyźni" in label:
+                male += int(value)
+            elif "kobiety" in label:
+                female += int(value)
+        total = male + female
+        if total <= 0:
+            return None
+        return {"M": male / total, "F": female / total}
+
+    def _parse_location_distribution(self, variables: list[dict]) -> dict[str, float] | None:
+        variable_ids = []
+        var_map = {}
+        for item in variables:
+            label = self._variable_label(item).lower()
+            if "miejsce zamieszkania" not in label and "miasto" not in label and "wieś" not in label:
+                continue
+            if "miasto" in label or "wieś" in label:
+                var_id = str(item.get("id"))
+                variable_ids.append(var_id)
+                var_map[var_id] = label
+
+        if not variable_ids:
+            return None
+
+        data = self._fetch_data_for_variables(variable_ids)
+        urban = rural = 0
+        for item in data:
+            var_id = str(item.get("variableId") or item.get("id") or "")
+            value = item.get("val") or item.get("value") or 0
+            label = var_map.get(var_id, "")
+            if "miasto" in label:
+                urban += int(value)
+            elif "wieś" in label:
+                rural += int(value)
+        total = urban + rural
+        if total <= 0:
+            return None
+        return {"urban": urban / total, "rural": rural / total, "suburban": 0.0}
+
+    def _parse_income_mean(self, variables: list[dict]) -> float | None:
+        variable_ids = []
+        var_map = {}
+        for item in variables:
+            label = self._variable_label(item).lower()
+            if "wynagrod" not in label:
+                continue
+            if "przeciętne miesięczne" not in label and "przecietne miesieczne" not in label:
+                continue
+            var_id = str(item.get("id"))
+            variable_ids.append(var_id)
+            var_map[var_id] = label
+
+        if not variable_ids:
+            return None
+
+        data = self._fetch_data_for_variables(variable_ids)
+        values = []
+        for item in data:
+            value = item.get("val") or item.get("value")
+            if value is None:
+                continue
+            try:
+                values.append(float(value))
+            except Exception:
+                continue
+        if not values:
+            return None
+        return float(max(values))
+
+    def _fetch_live_data(self) -> None:
+        subject_id = self._find_subject_id("ludność", must_have=["ludno", "wiek"])
+        if subject_id:
+            variables = self._list_variables(subject_id)
+            self._live_age_groups = self._parse_age_groups(variables) or self._live_age_groups
+            self._live_gender_distribution = self._parse_gender_distribution(variables) or self._live_gender_distribution
+
+        location_subject_id = self._find_subject_id("miejsce zamieszkania", must_have=["miejsce", "zamieszkania"])
+        if location_subject_id:
+            variables = self._list_variables(location_subject_id)
+            self._live_location_distribution = self._parse_location_distribution(variables) or self._live_location_distribution
+
+        income_subject_id = self._find_subject_id("wynagrodzenia", must_have=["wynagrod"])
+        if income_subject_id:
+            variables = self._list_variables(income_subject_id)
+            self._live_income_mean = self._parse_income_mean(variables) or self._live_income_mean
 
     def get_age_distribution(self) -> dict[str, int]:
         """
         Get population by age groups.
         Returns cached/default data (API calls are done sync at startup if needed).
         """
-        # For now, use realistic default distribution based on GUS census data
-        # This avoids async complexity and rate limiting issues
+        self._ensure_live_loaded()
+        if self._live_age_groups:
+            # Return as string labels for compatibility
+            out: dict[str, int] = {}
+            for min_age, max_age, count in self._live_age_groups:
+                label = f"{min_age}-{max_age}" if max_age is not None else f"{min_age}+"
+                out[label] = count
+            return out
         return self.DEFAULT_AGE_DISTRIBUTION.copy()
     
     def get_income_for_age(self, age: int) -> int:
         """Get realistic income based on age from GUS wage statistics."""
+        self._ensure_live_loaded()
         age_group = self._get_age_group(age)
         params = self.INCOME_BY_AGE.get(age_group, {"mean": 5000, "std": 1500})
-        
+
+        # Optionally scale mean/std using live GUS average wage (gross).
+        mean = params["mean"]
+        std = params["std"]
+        if self._live_income_mean:
+            # Scale by ratio vs default overall mean to keep age profile shape.
+            default_means = [v["mean"] for v in self.INCOME_BY_AGE[Language.PL].values()]
+            default_base = sum(default_means) / len(default_means)
+            ratio = self._live_income_mean / default_base if default_base else 1.0
+            mean = mean * ratio * self._income_net_ratio
+            std = std * ratio * self._income_net_ratio
+
         # Sample from normal distribution
-        income = random.gauss(params["mean"], params["std"])
+        income = random.gauss(mean, std)
         # Clamp to reasonable range
         income = max(2000, min(25000, income))
         return int(round(income, -2))  # Round to nearest 100
@@ -119,6 +431,17 @@ class GUSClient:
     
     def sample_age(self) -> int:
         """Sample age based on population distribution."""
+        self._ensure_live_loaded()
+        if self._live_age_groups:
+            total = sum(count for _, _, count in self._live_age_groups)
+            if total > 0:
+                weights = [count / total for _, _, count in self._live_age_groups]
+                selected = random.choices(self._live_age_groups, weights=weights)[0]
+                min_age, max_age, _ = selected
+                if max_age is None:
+                    max_age = min_age + 15
+                return random.randint(min_age, max_age)
+
         age_dist = self.get_age_distribution()
         total = sum(age_dist.values())
         weights = [v / total for v in age_dist.values()]
@@ -138,6 +461,12 @@ class GUSClient:
     
     def sample_gender(self) -> str:
         """Sample gender based on population distribution."""
+        self._ensure_live_loaded()
+        if self._live_gender_distribution:
+            return random.choices(
+                list(self._live_gender_distribution.keys()),
+                weights=list(self._live_gender_distribution.values()),
+            )[0]
         return random.choices(
             list(self.GENDER_DISTRIBUTION.keys()),
             weights=list(self.GENDER_DISTRIBUTION.values())
@@ -145,6 +474,12 @@ class GUSClient:
     
     def sample_location_type(self) -> str:
         """Sample location type based on urbanization statistics."""
+        self._ensure_live_loaded()
+        if self._live_location_distribution:
+            return random.choices(
+                list(self._live_location_distribution.keys()),
+                weights=list(self._live_location_distribution.values()),
+            )[0]
         return random.choices(
             list(self.LOCATION_DISTRIBUTION.keys()),
             weights=list(self.LOCATION_DISTRIBUTION.values())

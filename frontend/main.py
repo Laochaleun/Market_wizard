@@ -6,6 +6,7 @@ Supports Polish (PL) and English (EN) languages.
 """
 
 import asyncio
+import logging
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -43,7 +44,10 @@ from app.i18n import Language, get_label
 # Store last simulation result for report generation
 _last_simulation_result = None
 _last_product_description = None
+_last_product_input_raw = None
 _last_simulation_inputs = None
+_last_extracted_preview = None
+_last_extracted_full = None
 
 _last_ab_test_result = None
 _last_ab_test_inputs = None
@@ -65,7 +69,7 @@ def get_lang(lang_code: str) -> Language:
 def create_histogram_data(distribution: dict, lang: Language) -> pd.DataFrame:
     """Convert distribution dict to DataFrame for plotting."""
     if lang == Language.PL:
-        labels = ["1-Nie", "2-Raczej nie", "3-Neutralny", "4-Raczej tak", "5-Tak"]
+        labels = ["1-Nie", "2-Raczej nie", "3-Ani tak, ani nie", "4-Raczej tak", "5-Tak"]
         col_x, col_y = "Odpowiedź", "Procent"
     else:
         labels = ["1-No", "2-Probably not", "3-Neutral", "4-Probably yes", "5-Yes"]
@@ -113,7 +117,7 @@ def build_simulation_summary(result: SimulationResult, lang: Language) -> str:
             f"### Rozkład odpowiedzi:\n"
             f"- Zdecydowanie NIE: {dist['scale_1']*100:.1f}%\n"
             f"- Raczej nie: {dist['scale_2']*100:.1f}%\n"
-            f"- Neutralny: {dist['scale_3']*100:.1f}%\n"
+            f"- Ani tak, ani nie: {dist['scale_3']*100:.1f}%\n"
             f"- Raczej tak: {dist['scale_4']*100:.1f}%\n"
             f"- Zdecydowanie TAK: {dist['scale_5']*100:.1f}%\n"
         )
@@ -205,6 +209,12 @@ def build_price_analysis_outputs(result: dict, lang: Language) -> tuple[str, pd.
             curve_text += "\n\n### Price Elasticity\n"
         for e in result["elasticities"]:
             curve_text += f"- {e['price_range']}: {e['elasticity']:.2f}\n"
+
+    if "seed" in result:
+        if lang == Language.PL:
+            curve_text += f"\n\n*Stabilizacja: stała populacja person. Seed: {result['seed']}*"
+        else:
+            curve_text += f"\n\n*Stabilization: fixed persona population. Seed: {result['seed']}*"
 
     if lang == Language.PL:
         chart_df = pd.DataFrame(
@@ -340,7 +350,7 @@ def mark_dirty(
         "price_min": 19.99,
         "price_max": 59.99,
         "price_points": 5,
-        "price_n_agents": 20,
+        "price_n_agents": 50,
         "fg_product": "",
         "fg_participants": 6,
         "fg_rounds": 3,
@@ -442,6 +452,12 @@ def autosave_simulation_project(
 
         product_description = inputs.get("product_description") or project.get("product_description", "")
         project["product_description"] = product_description
+        raw_input = inputs.get("product_input_raw")
+        if raw_input:
+            project["product_input_raw"] = raw_input
+        extracted_full = inputs.get("product_extracted_full")
+        if extracted_full:
+            project["product_extracted_full"] = extracted_full
 
         target_audience = inputs.get("target_audience") or project.get("target_audience")
         if target_audience:
@@ -694,12 +710,13 @@ async def run_simulation_async(
     
     if not product_description.strip():
         err = get_label(lang, "error_no_product")
-        return None, err, "", err, gr.update(), ""
+        return None, err, "", err, gr.update(), "", ""
 
     progress(0, desc="Initializing..." if lang == Language.EN else "Inicjalizacja...")
     url_status_msg = ""
     extracted_preview = ""
     extracted_full = ""
+    input_product_raw = product_description.strip()
 
     try:
         # Process product input - extract from URL if needed
@@ -766,17 +783,24 @@ async def run_simulation_async(
         progress(1.0, desc="Done!" if lang == Language.EN else "Gotowe!")
 
         # Store result for report generation and project saving
-        global _last_simulation_result, _last_product_description, _last_simulation_inputs
+        global _last_simulation_result, _last_product_description, _last_product_input_raw
+        global _last_simulation_inputs, _last_extracted_preview, _last_extracted_full
         _last_simulation_result = result
         _last_product_description = product_description
+        _last_product_input_raw = input_product_raw
         sim_inputs = {
             "product_description": product_description,
+            "product_input_raw": input_product_raw,
+            "product_extracted_full": extracted_full,
+            "product_extracted_preview": extracted_preview,
             "n_agents": n_agents,
             "target_audience": profile.model_dump(),
             "enable_web_search": enable_web_search,
             "temperature": temperature,
         }
         _last_simulation_inputs = sim_inputs
+        _last_extracted_preview = extracted_preview
+        _last_extracted_full = extracted_full
 
         autosave_msg = autosave_simulation_project(project_id, result, sim_inputs, lang)
         status_msg = get_label(lang, "success")
@@ -807,6 +831,9 @@ async def run_simulation_async(
             dirty_value,
             extracted_preview,
             extracted_full,
+            gr.update(value=input_product_raw),
+            gr.update(value=input_product_raw),
+            gr.update(value=input_product_raw),
         )
 
     except Exception as e:
@@ -820,6 +847,9 @@ async def run_simulation_async(
             gr.update(),
             "",
             "",
+            gr.update(),
+            gr.update(),
+            gr.update(),
         )
 
 
@@ -1335,6 +1365,9 @@ def save_project(
     if not product_description:
         product_description = existing.get("product_description", "")
 
+    product_input_raw = input_product or _last_product_input_raw or existing.get("product_input_raw", "")
+    product_extracted_full = _last_extracted_full or existing.get("product_extracted_full", "")
+
     target_audience = existing.get("target_audience")
     if _last_simulation_inputs:
         target_audience = _last_simulation_inputs.get("target_audience")
@@ -1357,6 +1390,8 @@ def save_project(
         else:
             sim_payload["inputs"] = {
                 "product_description": input_product or product_description,
+                "product_input_raw": product_input_raw,
+                "product_extracted_full": product_extracted_full,
                 "n_agents": n_agents,
                 "target_audience": target_audience,
                 "enable_web_search": enable_web_search,
@@ -1369,6 +1404,8 @@ def save_project(
         research["simulation"] = {
             "inputs": {
                 "product_description": input_product or product_description,
+                "product_input_raw": product_input_raw,
+                "product_extracted_full": product_extracted_full,
                 "n_agents": n_agents,
                 "target_audience": target_audience,
                 "enable_web_search": enable_web_search,
@@ -1459,10 +1496,13 @@ def load_project(
     allow_discard: bool,
     project_dirty: bool,
 ):
+    import logging
+
     lang = get_lang(lang_code)
+    logger = logging.getLogger(__name__)
     def _no_change_updates(count: int) -> list:
         return [gr.update() for _ in range(count)]
-    total_outputs = 43
+    total_outputs = 45
     status_index = 9
 
     def _confirm_message(message: str):
@@ -1485,7 +1525,7 @@ def load_project(
             msg,
             gr.update(visible=False),
             gr.update(visible=False),
-            *_no_change_updates(31),
+            *_no_change_updates(33),
         )
 
     if project_dirty and not allow_discard:
@@ -1517,123 +1557,147 @@ def load_project(
             msg,
             gr.update(visible=False),
             gr.update(visible=False),
-            *_no_change_updates(31),
+            *_no_change_updates(33),
         )
 
-    info = build_project_info(project, lang)
+    try:
+        info = build_project_info(project, lang)
 
-    research = project.get("research", {})
+        research = project.get("research", {})
 
-    sim_summary = ""
-    sim_opinions = ""
-    sim_chart = _empty_histogram_df(lang)
-    sim_payload = research.get("simulation", {})
-    if sim_payload.get("result"):
-        sim_result = SimulationResult.model_validate(sim_payload["result"])
-        sim_summary = build_simulation_summary(sim_result, lang)
-        sim_opinions = build_simulation_opinions(sim_result, lang)
-        sim_chart = create_histogram_data(sim_result.aggregate_distribution.model_dump(), lang)
-        # Restore globals for report generation
-        global _last_simulation_result, _last_product_description, _last_simulation_inputs
-        _last_simulation_result = sim_result
-        _last_product_description = (
-            sim_payload.get("inputs", {}).get("product_description")
+        sim_summary = ""
+        sim_opinions = ""
+        sim_chart = _empty_histogram_df(lang)
+        sim_payload = research.get("simulation", {})
+        if sim_payload.get("result"):
+            sim_result = SimulationResult.model_validate(sim_payload["result"])
+            sim_summary = build_simulation_summary(sim_result, lang)
+            sim_opinions = build_simulation_opinions(sim_result, lang)
+            sim_chart = create_histogram_data(sim_result.aggregate_distribution.model_dump(), lang)
+            # Restore globals for report generation
+            global _last_simulation_result, _last_product_description, _last_simulation_inputs
+            _last_simulation_result = sim_result
+            _last_product_description = (
+                sim_payload.get("inputs", {}).get("product_description")
+                or project.get("product_description", "")
+            )
+            _last_simulation_inputs = sim_payload.get("inputs")
+        else:
+            sim_summary = (
+                "Brak zapisanych wyników symulacji."
+                if lang == Language.PL
+                else "No saved simulation results."
+            )
+
+        ab_summary = ""
+        ab_payload = research.get("ab_test", {})
+        if ab_payload.get("result"):
+            ab_summary = build_ab_test_summary(ab_payload["result"], lang)
+        else:
+            ab_summary = (
+                "Brak zapisanych wyników testu A/B."
+                if lang == Language.PL
+                else "No saved A/B test results."
+            )
+
+        price_summary = ""
+        price_chart = _empty_price_df(lang)
+        price_payload = research.get("price_analysis", {})
+        if price_payload.get("result"):
+            price_summary, price_chart = build_price_analysis_outputs(price_payload["result"], lang)
+        else:
+            price_summary = (
+                "Brak zapisanych wyników analizy cenowej."
+                if lang == Language.PL
+                else "No saved price analysis results."
+            )
+
+        fg_transcript = ""
+        fg_summary = ""
+        fg_payload = research.get("focus_group", {})
+        if fg_payload.get("result"):
+            fg_transcript = fg_payload["result"].get("transcript", "")
+            fg_summary = fg_payload["result"].get("summary", "")
+            global _last_fg_transcript, _last_fg_summary, _last_fg_product, _last_focus_group_inputs
+            _last_fg_transcript = fg_transcript
+            _last_fg_summary = fg_summary
+            _last_fg_product = fg_payload["result"].get("product", "")
+            _last_focus_group_inputs = fg_payload.get("inputs")
+        else:
+            fg_transcript = (
+                "Brak zapisanej transkrypcji."
+                if lang == Language.PL
+                else "No saved transcript."
+            )
+            fg_summary = (
+                "Brak zapisanych wniosków."
+                if lang == Language.PL
+                else "No saved summary."
+            )
+
+        sim_inputs = sim_payload.get("inputs", {}) if sim_payload else {}
+        ab_inputs = ab_payload.get("inputs", {}) if ab_payload else {}
+        price_inputs = price_payload.get("inputs", {}) if price_payload else {}
+        fg_inputs = fg_payload.get("inputs", {}) if fg_payload else {}
+
+        project_name_value = project.get("name", "")
+        product_value = (
+            sim_inputs.get("product_input_raw")
+            or project.get("product_input_raw", "")
+            or sim_inputs.get("product_description")
             or project.get("product_description", "")
         )
-        _last_simulation_inputs = sim_payload.get("inputs")
-    else:
-        sim_summary = (
-            "Brak zapisanych wyników symulacji."
-            if lang == Language.PL
-            else "No saved simulation results."
+
+        target_audience = sim_inputs.get("target_audience") or project.get("target_audience")
+        age_min_value, age_max_value, gender_value, income_value, location_value = (
+            target_audience_to_ui(lang, target_audience)
         )
 
-    ab_summary = ""
-    ab_payload = research.get("ab_test", {})
-    if ab_payload.get("result"):
-        ab_summary = build_ab_test_summary(ab_payload["result"], lang)
-    else:
-        ab_summary = (
-            "Brak zapisanych wyników testu A/B."
-            if lang == Language.PL
-            else "No saved A/B test results."
+        n_agents_value = int(sim_inputs.get("n_agents") or 20)
+        n_agents_value = max(5, min(100, n_agents_value))
+        enable_web_search_value = bool(sim_inputs.get("enable_web_search", False))
+        temperature_value = float(sim_inputs.get("temperature") or 0.01)
+
+        variant_a_value = ab_inputs.get("variant_a") or product_value
+        variant_b_value = ab_inputs.get("variant_b") or ""
+        ab_n_agents_value = int(ab_inputs.get("n_agents") or 30)
+        ab_n_agents_value = max(10, min(100, ab_n_agents_value))
+
+        price_product_value = (
+            price_inputs.get("base_product_description")
+            or product_value
         )
+        price_min_value = float(price_inputs.get("price_min") or 19.99)
+        price_max_value = float(price_inputs.get("price_max") or 59.99)
+        price_points_value = int(price_inputs.get("price_points") or 5)
+        price_points_value = max(3, min(7, price_points_value))
+        price_n_agents_value = int(price_inputs.get("n_agents") or 20)
+        price_n_agents_value = max(10, min(100, price_n_agents_value))
 
-    price_summary = ""
-    price_chart = _empty_price_df(lang)
-    price_payload = research.get("price_analysis", {})
-    if price_payload.get("result"):
-        price_summary, price_chart = build_price_analysis_outputs(price_payload["result"], lang)
-    else:
-        price_summary = (
-            "Brak zapisanych wyników analizy cenowej."
-            if lang == Language.PL
-            else "No saved price analysis results."
-        )
+        fg_product_value = fg_inputs.get("product_description") or product_value
+        fg_participants_value = int(fg_inputs.get("n_participants") or 6)
+        fg_participants_value = max(4, min(8, fg_participants_value))
+        fg_rounds_value = int(fg_inputs.get("n_rounds") or 3)
+        fg_rounds_value = max(2, min(4, fg_rounds_value))
 
-    fg_transcript = ""
-    fg_summary = ""
-    fg_payload = research.get("focus_group", {})
-    if fg_payload.get("result"):
-        fg_transcript = fg_payload["result"].get("transcript", "")
-        fg_summary = fg_payload["result"].get("summary", "")
-        global _last_fg_transcript, _last_fg_summary, _last_fg_product, _last_focus_group_inputs
-        _last_fg_transcript = fg_transcript
-        _last_fg_summary = fg_summary
-        _last_fg_product = fg_payload["result"].get("product", "")
-        _last_focus_group_inputs = fg_payload.get("inputs")
-    else:
-        fg_transcript = (
-            "Brak zapisanej transkrypcji."
-            if lang == Language.PL
-            else "No saved transcript."
-        )
-        fg_summary = (
-            "Brak zapisanych wniosków."
-            if lang == Language.PL
-            else "No saved summary."
-        )
+        extracted_full = sim_inputs.get("product_extracted_full") or project.get("product_extracted_full", "")
+        extracted_preview = sim_inputs.get("product_extracted_preview") or _shorten_extracted(extracted_full, lang)
 
-    sim_inputs = sim_payload.get("inputs", {}) if sim_payload else {}
-    ab_inputs = ab_payload.get("inputs", {}) if ab_payload else {}
-    price_inputs = price_payload.get("inputs", {}) if price_payload else {}
-    fg_inputs = fg_payload.get("inputs", {}) if fg_payload else {}
+        if extracted_preview:
+            if lang == Language.PL:
+                extracted_preview = f"**Wyciągnięte dane:** {extracted_preview}"
+            else:
+                extracted_preview = f"**Extracted data:** {extracted_preview}"
 
-    project_name_value = project.get("name", "")
-    product_value = (
-        sim_inputs.get("product_description")
-        or project.get("product_description", "")
-    )
+        if extracted_full:
+            if lang == Language.PL:
+                extracted_full = f"**Pełny opis:** {extracted_full}"
+            else:
+                extracted_full = f"**Full description:** {extracted_full}"
 
-    target_audience = sim_inputs.get("target_audience") or project.get("target_audience")
-    age_min_value, age_max_value, gender_value, income_value, location_value = (
-        target_audience_to_ui(lang, target_audience)
-    )
+        msg = "✅ Wczytano projekt." if lang == Language.PL else "✅ Project loaded."
 
-    n_agents_value = int(sim_inputs.get("n_agents") or 20)
-    enable_web_search_value = bool(sim_inputs.get("enable_web_search", False))
-    temperature_value = float(sim_inputs.get("temperature") or 0.01)
-
-    variant_a_value = ab_inputs.get("variant_a") or project.get("product_description", "")
-    variant_b_value = ab_inputs.get("variant_b") or ""
-    ab_n_agents_value = int(ab_inputs.get("n_agents") or 30)
-
-    price_product_value = (
-        price_inputs.get("base_product_description")
-        or project.get("product_description", "")
-    )
-    price_min_value = float(price_inputs.get("price_min") or 19.99)
-    price_max_value = float(price_inputs.get("price_max") or 59.99)
-    price_points_value = int(price_inputs.get("price_points") or 5)
-    price_n_agents_value = int(price_inputs.get("n_agents") or 20)
-
-    fg_product_value = fg_inputs.get("product_description") or project.get("product_description", "")
-    fg_participants_value = int(fg_inputs.get("n_participants") or 6)
-    fg_rounds_value = int(fg_inputs.get("n_rounds") or 3)
-
-    msg = "✅ Wczytano projekt." if lang == Language.PL else "✅ Project loaded."
-
-    return (
+        return (
         info,
         sim_summary,
         sim_chart,
@@ -1648,6 +1712,8 @@ def load_project(
         gr.update(visible=False),
         gr.update(value=project_name_value),
         gr.update(value=product_value),
+        gr.update(value=extracted_preview or ""),
+        gr.update(value=extracted_full or ""),
         gr.update(value=age_min_value),
         gr.update(value=age_max_value),
         gr.update(value=gender_value),
@@ -1677,7 +1743,17 @@ def load_project(
         fg_summary,
         False,
         True,
-    )
+        )
+    except Exception as e:
+        logger.exception("Load project failed: %s", e)
+        msg = "❌ Błąd wczytywania projektu." if lang == Language.PL else "❌ Failed to load project."
+        updates = [gr.update() for _ in range(total_outputs)]
+        updates[status_index] = msg
+        updates[12] = gr.update(value="")
+        updates[13] = gr.update(value="")
+        updates[14] = gr.update(value="")
+        updates[15] = gr.update(value="")
+        return tuple(updates)
 
 
 def maybe_autoload_project(
@@ -1689,7 +1765,7 @@ def maybe_autoload_project(
 ):
     """Auto-load project on selection if enabled."""
     if not auto_load:
-        return tuple(gr.update() for _ in range(43))
+        return tuple(gr.update() for _ in range(45))
     return load_project(lang_code, project_id, allow_discard, project_dirty)
 
 
@@ -1834,32 +1910,6 @@ def create_interface():
                 export_status = gr.Markdown("")
                 export_file = gr.File(label="📥 Download / Pobierz", visible=True)
 
-                run_btn.click(
-                    fn=run_simulation,
-                    inputs=[
-                        language_select,
-                        product_input,
-                        n_agents,
-                        age_min,
-                        age_max,
-                        gender,
-                        income,
-                        location,
-                        enable_web_search,
-                        temperature,
-                        project_state,
-                    ],
-                    outputs=[
-                        chart_output,
-                        summary_output,
-                        opinions_output,
-                        status,
-                        project_dirty,
-                        extracted_product_preview,
-                        extracted_product_full,
-                    ],
-                )
-
                 report_btn.click(
                     fn=generate_report,
                     inputs=[language_select],
@@ -1914,7 +1964,7 @@ def create_interface():
                     price_max = gr.Number(value=59.99, label="Price max / Cena max")
                     price_points = gr.Slider(3, 7, value=5, step=1, label="Price points / Punkty cenowe")
 
-                price_n_agents = gr.Slider(10, 50, value=20, step=5, label="Agents per price / Agentów na cenę")
+                price_n_agents = gr.Slider(10, 100, value=50, step=5, label="Agents per price / Agentów na cenę")
                 price_run_btn = gr.Button("💰 Analyze / Analizuj", variant="primary")
                 price_status = gr.Markdown("")
 
@@ -2111,6 +2161,8 @@ def create_interface():
                         load_without_saving_btn,
                         project_name,
                         product_input,
+                        extracted_product_preview,
+                        extracted_product_full,
                         age_min,
                         age_max,
                         gender,
@@ -2200,6 +2252,8 @@ def create_interface():
                         load_without_saving_btn,
                         project_name,
                         product_input,
+                        extracted_product_preview,
+                        extracted_product_full,
                         age_min,
                         age_max,
                         gender,
@@ -2281,6 +2335,8 @@ def create_interface():
                         load_without_saving_btn,
                         project_name,
                         product_input,
+                        extracted_product_preview,
+                        extracted_product_full,
                         age_min,
                         age_max,
                         gender,
@@ -2334,6 +2390,8 @@ def create_interface():
                         load_without_saving_btn,
                         project_name,
                         product_input,
+                        extracted_product_preview,
+                        extracted_product_full,
                         age_min,
                         age_max,
                         gender,
@@ -2463,10 +2521,41 @@ def create_interface():
             """
         )
 
+        # Wire actions after all components are defined.
+        run_btn.click(
+            fn=run_simulation,
+            inputs=[
+                language_select,
+                product_input,
+                n_agents,
+                age_min,
+                age_max,
+                gender,
+                income,
+                location,
+                enable_web_search,
+                temperature,
+                project_state,
+            ],
+            outputs=[
+                chart_output,
+                summary_output,
+                opinions_output,
+                status,
+                project_dirty,
+                extracted_product_preview,
+                extracted_product_full,
+                variant_a_input,
+                price_product,
+                fg_product,
+            ],
+        )
+
     return demo
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     demo = create_interface()
     demo.launch(
         server_name="0.0.0.0",

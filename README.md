@@ -198,6 +198,10 @@ Po uruchomieniu symulacji możesz wygenerować pełny raport HTML zawierający:
 - 📦 Opis analizowanego produktu
 - 📊 Średnia intencja zakupu + odchylenie standardowe
 - 📈 Wykres rozkładu intencji (słupkowy)
+
+## ✅ TODO
+
+- [ ] Integracja zewnętrznych źródeł danych dochodów (np. Eurostat API lub plik CSV/Excel z BAEL/GUS), aby zasilać rozkład dochodów wg wieku/regionu zamiast obecnego modelu syntetycznego.
 - 👥 Profil demograficzny (wiek, dochód, płeć)
 - 💰 Wykres korelacji dochód ↔ intencja
 - 📝 **Wszystkie odpowiedzi agentów** z ocenami SSR
