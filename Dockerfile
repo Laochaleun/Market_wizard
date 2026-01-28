@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y \
 COPY . /app
 
 # Install backend package and dependencies
-cd backend && pip install --no-cache-dir .
+RUN cd backend && pip install --no-cache-dir .
 
 # Expose the port Gradio will run on (7860 is standard for HF Spaces)
 EXPOSE 7860
