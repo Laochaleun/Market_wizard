@@ -1,3 +1,12 @@
+---
+title: Market Wizard
+emoji: 🔮
+colorFrom: blue
+colorTo: purple
+sdk: docker
+pinned: false
+---
+
 # Market Wizard 🔮
 
 Analizator rynku i produktu oparty na metodologii **SSR (Semantic Similarity Rating)** z badania [arxiv:2510.08338](https://arxiv.org/abs/2510.08338).
