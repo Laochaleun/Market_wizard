@@ -4,6 +4,21 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+import os
+import sys
+
+# Debug: Check environment during import
+print(f"DEBUG: Loading config. GOOGLE_API_KEY in os.environ: {'GOOGLE_API_KEY' in os.environ}")
+if 'GOOGLE_API_KEY' in os.environ:
+    print(f"DEBUG: Key length: {len(os.environ['GOOGLE_API_KEY'])}")
+else:
+    print("DEBUG: GOOGLE_API_KEY is MISSING from environment")
+
+from functools import lru_cache
+from pathlib import Path
+from typing import Literal
+
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Get absolute path to .env file in backend directory
@@ -21,7 +36,7 @@ class Settings(BaseSettings):
     )
 
     # API Keys
-    google_api_key: str = ""
+    google_api_key: str = Field(default="", validation_alias="GOOGLE_API_KEY")
     openai_api_key: str = ""
 
     # LLM Settings
