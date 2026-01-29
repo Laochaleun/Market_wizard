@@ -858,7 +858,7 @@ def run_simulation(*args):
     return asyncio.run(run_simulation_async(*args))
 
 
-def generate_report(lang_code: str):
+def generate_report(lang_code: str, only_cited_sources: bool):
     """Generate HTML report preview from last simulation results."""
     global _last_simulation_result, _last_product_description
     lang = get_lang(lang_code)
@@ -875,11 +875,13 @@ def generate_report(lang_code: str):
             result=_last_simulation_result,
             product_description=_last_product_description,
             lang=lang,
+            include_only_cited_sources=bool(only_cited_sources),
         )
         
         # Store for export (raw HTML)
-        global _last_report_html
+        global _last_report_html, _last_report_only_cited
         _last_report_html = html_content
+        _last_report_only_cited = bool(only_cited_sources)
         
         # Wrap in iframe to isolate styles from Gradio
         # Escape quotes for srcdoc attribute
@@ -903,18 +905,29 @@ def generate_report(lang_code: str):
 
 # Store last report HTML for export
 _last_report_html = None
+_last_report_only_cited = None
 
 
-def export_report(lang_code: str, export_format: str):
+def export_report(lang_code: str, export_format: str, only_cited_sources: bool):
     """Export report to HTML or PDF file."""
-    global _last_report_html
+    global _last_report_html, _last_report_only_cited
     lang = get_lang(lang_code)
     
-    if _last_report_html is None:
+    if _last_simulation_result is None:
         if lang == Language.EN:
-            return None, "❌ Generate report first."
+            return None, "❌ No simulation results. Run a simulation first."
         else:
-            return None, "❌ Najpierw wygeneruj raport."
+            return None, "❌ Brak wyników symulacji. Najpierw uruchom symulację."
+
+    if _last_report_html is None or _last_report_only_cited != bool(only_cited_sources):
+        html_content = generate_html_report(
+            result=_last_simulation_result,
+            product_description=_last_product_description,
+            lang=lang,
+            include_only_cited_sources=bool(only_cited_sources),
+        )
+        _last_report_html = html_content
+        _last_report_only_cited = bool(only_cited_sources)
     
     try:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -1891,6 +1904,11 @@ def create_interface():
                 with gr.Row():
                     report_btn = gr.Button("👁️ Generate Preview / Generuj podgląd", variant="secondary")
                     report_status = gr.Markdown("")
+                only_cited_sources = gr.Checkbox(
+                    value=False,
+                    label="Only cited sources / Tylko cytowane źródła",
+                    info="Show only sources referenced with [n] citations in agent responses",
+                )
                 
                 # Report preview (HTML iframe)
                 report_preview = gr.HTML(
@@ -1912,13 +1930,13 @@ def create_interface():
 
                 report_btn.click(
                     fn=generate_report,
-                    inputs=[language_select],
+                    inputs=[language_select, only_cited_sources],
                     outputs=[report_preview, report_status],
                 )
 
                 export_btn.click(
                     fn=export_report,
-                    inputs=[language_select, export_format],
+                    inputs=[language_select, export_format, only_cited_sources],
                     outputs=[export_file, export_status],
                 )
 

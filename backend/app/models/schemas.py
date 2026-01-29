@@ -112,6 +112,7 @@ class AgentResponse(BaseModel):
     text_response: str
     likert_pmf: LikertDistribution
     likert_score: float  # Expected value
+    sources: list[str] = Field(default_factory=list, description="URLs used for this response")
 
 
 class SimulationResult(BaseModel):

@@ -150,6 +150,7 @@ def generate_html_report(
     result: SimulationResult,
     product_description: str,
     lang: Language = Language.PL,
+    include_only_cited_sources: bool = False,
 ) -> str:
     """Generate comprehensive HTML report."""
     
@@ -178,17 +179,51 @@ def generate_html_report(
     sorted_responses = sorted(result.agent_responses, key=lambda r: r.likert_score, reverse=True)
     
     # Generate HTML
+    sources = _select_report_sources(result, include_only_cited_sources)
+    total_sources_count = len(result.web_sources or [])
+
     if lang == Language.PL:
-        html = _generate_html_pl(result, product_description, stats, sorted_responses, 
-                                  dist_chart, age_chart, income_chart)
+        html = _generate_html_pl(
+            result,
+            product_description,
+            stats,
+            sorted_responses,
+            dist_chart,
+            age_chart,
+            income_chart,
+            sources,
+            total_sources_count,
+            include_only_cited_sources,
+        )
     else:
-        html = _generate_html_en(result, product_description, stats, sorted_responses,
-                                  dist_chart, age_chart, income_chart)
+        html = _generate_html_en(
+            result,
+            product_description,
+            stats,
+            sorted_responses,
+            dist_chart,
+            age_chart,
+            income_chart,
+            sources,
+            total_sources_count,
+            include_only_cited_sources,
+        )
     
     return html
 
 
-def _generate_html_pl(result, product, stats, responses, dist_chart, age_chart, income_chart):
+def _generate_html_pl(
+    result,
+    product,
+    stats,
+    responses,
+    dist_chart,
+    age_chart,
+    income_chart,
+    sources,
+    total_sources_count,
+    only_cited,
+):
     """Generate Polish HTML report."""
     
     # Build responses HTML
@@ -210,7 +245,7 @@ def _generate_html_pl(result, product, stats, responses, dist_chart, age_chart, 
                 <span style="color: #000000; font-weight: 500;">💰 {p.income:,} PLN</span>
                 {f'<span style="color: #000000; font-weight: 500;">💼 {p.occupation}</span>' if p.occupation else ''}
             </div>
-            <blockquote style="background: #f8fafc; padding: 1rem; border-radius: 0.5rem; border-left: 3px solid #1e3a5f; font-style: italic; color: #000000; margin: 0;">{r.text_response}</blockquote>
+            <div style="background: #f8fafc; padding: 1rem; border-radius: 0.5rem; border-left: 3px solid #1e3a5f; color: #000000; margin: 0;">{_format_response_html(r.text_response)}</div>
         </div>
         """
     
@@ -431,7 +466,7 @@ def _generate_html_pl(result, product, stats, responses, dist_chart, age_chart, 
             {responses_html}
         </div>
         
-        {_generate_sources_section_pl(result.web_sources) if result.web_sources else ''}
+        {_generate_sources_section_pl(sources, total_sources_count, only_cited) if sources else ''}
         
         <div style="text-align: center; padding: 2rem; color: #000000; font-size: 0.875rem;">
             <p>Raport wygenerowany przez Market Wizard</p>
@@ -442,10 +477,23 @@ def _generate_html_pl(result, product, stats, responses, dist_chart, age_chart, 
 </html>"""
 
 
-def _generate_sources_section_pl(sources: list[str]) -> str:
+def _generate_sources_section_pl(
+    sources: list[str],
+    total_sources_count: int,
+    only_cited: bool,
+) -> str:
     """Generate sources section for Polish report."""
     if not sources:
         return ""
+
+    from urllib.parse import urlparse
+
+    domains = {
+        urlparse(url).netloc.lower()
+        for url in sources
+        if urlparse(url).netloc
+    }
+    domain_count = len(domains)
     
     sources_html = ""
     for i, url in enumerate(sources[:20], 1):  # Limit to 20 sources
@@ -458,10 +506,15 @@ def _generate_sources_section_pl(sources: list[str]) -> str:
             </a>
         </div>'''
     
+    cited_info = (
+        f", {len(sources)} cytowane z {total_sources_count}"
+        if only_cited and total_sources_count
+        else ""
+    )
     return f'''
     <div style="background: #ffffff; border-radius: 1rem; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
         <h2 style="color: #000000; font-size: 1.25rem; margin-bottom: 1rem; border-bottom: 2px solid #1e3a5f; padding-bottom: 0.5rem;">
-            🔍 Źródła wykorzystane do analizy rynku ({len(sources)} źródeł)
+            🔍 Źródła wykorzystane do analizy rynku ({len(sources)} źródeł, {domain_count} domen{cited_info})
         </h2>
         <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1rem;">
             Agenci wyszukali poniższe źródła aby porównać produkt z konkurencją:
@@ -470,7 +523,95 @@ def _generate_sources_section_pl(sources: list[str]) -> str:
     </div>'''
 
 
-def _generate_html_en(result, product, stats, responses, dist_chart, age_chart, income_chart):
+def _select_report_sources(result: SimulationResult, only_cited: bool) -> list[str]:
+    if not only_cited:
+        return list(result.web_sources or [])
+
+    import re
+
+    cited_urls: list[str] = []
+    seen: set[str] = set()
+    citation_re = re.compile(r"\[(\d+)\]")
+
+    for resp in result.agent_responses:
+        indices = [int(m.group(1)) for m in citation_re.finditer(resp.text_response or "")]
+        if not indices:
+            continue
+        for idx in indices:
+            pos = idx - 1
+            if pos < 0 or pos >= len(resp.sources):
+                continue
+            url = resp.sources[pos]
+            if url and url not in seen:
+                seen.add(url)
+                cited_urls.append(url)
+
+    return cited_urls
+
+
+def _format_response_html(text: str) -> str:
+    import html
+    import re
+
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+
+    escaped = html.escape(raw)
+    lines = [line.strip() for line in escaped.split("\n")]
+    out: list[str] = []
+    in_list = False
+
+    def close_list():
+        nonlocal in_list
+        if in_list:
+            out.append("</ul>")
+            in_list = False
+
+    bold_re = re.compile(r"\*\*(.+?)\*\*")
+
+    for line in lines:
+        if not line:
+            close_list()
+            continue
+        # Headings like ### or ##
+        if line.startswith("### "):
+            close_list()
+            out.append(f"<div style=\"font-weight: 700; margin: 0.5rem 0;\">{line[4:]}</div>")
+            continue
+        if line.startswith("## "):
+            close_list()
+            out.append(f"<div style=\"font-weight: 700; margin: 0.5rem 0;\">{line[3:]}</div>")
+            continue
+        # Bullets
+        if line.startswith("* ") or line.startswith("- "):
+            if not in_list:
+                out.append("<ul style=\"margin: 0.5rem 0 0.5rem 1.25rem;\">")
+                in_list = True
+            item = line[2:].strip()
+            item = bold_re.sub(r"<strong>\1</strong>", item)
+            out.append(f"<li>{item}</li>")
+            continue
+        close_list()
+        paragraph = bold_re.sub(r"<strong>\1</strong>", line)
+        out.append(f"<p style=\"margin: 0.5rem 0;\">{paragraph}</p>")
+
+    close_list()
+    return "".join(out)
+
+
+def _generate_html_en(
+    result,
+    product,
+    stats,
+    responses,
+    dist_chart,
+    age_chart,
+    income_chart,
+    sources,
+    total_sources_count,
+    only_cited,
+):
     """Generate English HTML report."""
     
     # Build responses HTML
@@ -492,7 +633,7 @@ def _generate_html_en(result, product, stats, responses, dist_chart, age_chart, 
                 <span style="color: #000000; font-weight: 500;">💰 ${p.income:,}</span>
                 {f'<span style="color: #000000; font-weight: 500;">💼 {p.occupation}</span>' if p.occupation else ''}
             </div>
-            <blockquote style="background: #f8fafc; padding: 1rem; border-radius: 0.5rem; border-left: 3px solid #1e3a5f; font-style: italic; color: #000000; margin: 0;">{r.text_response}</blockquote>
+            <div style="background: #f8fafc; padding: 1rem; border-radius: 0.5rem; border-left: 3px solid #1e3a5f; color: #000000; margin: 0;">{_format_response_html(r.text_response)}</div>
         </div>
         """
     
@@ -698,7 +839,7 @@ def _generate_html_en(result, product, stats, responses, dist_chart, age_chart, 
             {responses_html}
         </div>
         
-        {_generate_sources_section_en(result.web_sources) if result.web_sources else ''}
+        {_generate_sources_section_en(sources, total_sources_count, only_cited) if sources else ''}
         
         <div class="footer">
             <p>Report generated by Market Wizard</p>
@@ -709,10 +850,23 @@ def _generate_html_en(result, product, stats, responses, dist_chart, age_chart, 
 </html>"""
 
 
-def _generate_sources_section_en(sources: list[str]) -> str:
+def _generate_sources_section_en(
+    sources: list[str],
+    total_sources_count: int,
+    only_cited: bool,
+) -> str:
     """Generate sources section for English report."""
     if not sources:
         return ""
+
+    from urllib.parse import urlparse
+
+    domains = {
+        urlparse(url).netloc.lower()
+        for url in sources
+        if urlparse(url).netloc
+    }
+    domain_count = len(domains)
     
     sources_html = ""
     for i, url in enumerate(sources[:20], 1):
@@ -724,9 +878,14 @@ def _generate_sources_section_en(sources: list[str]) -> str:
             </a>
         </div>'''
     
+    cited_info = (
+        f", {len(sources)} cited of {total_sources_count}"
+        if only_cited and total_sources_count
+        else ""
+    )
     return f'''
     <div class="card">
-        <h2>🔍 Web Sources Used for Market Analysis ({len(sources)} sources)</h2>
+        <h2>🔍 Web Sources Used for Market Analysis ({len(sources)} sources, {domain_count} domains{cited_info})</h2>
         <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1rem;">
             Agents searched these sources to compare product with competition:
         </p>

@@ -6,16 +6,176 @@ import json
 import logging
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
 
+from app.config import get_settings
+
 logger = logging.getLogger(__name__)
+
+
+def _is_grounding_redirect(url: str) -> bool:
+    return "vertexaisearch.cloud.google.com/grounding-api-redirect" in (url or "")
 
 
 def _clean_text(text: str) -> str:
     text = re.sub(r"\s+", " ", text or "").strip()
     return text
+
+
+def _tokenize_keywords(text: str) -> list[str]:
+    tokens = re.findall(r"[a-z0-9ąćęłńóśżź]+", (text or "").lower())
+    stop = {
+        "the","and","for","with","this","that","from","your","you","all","one","two",
+        "of","to","in","on","a","an","or","is","are","by","as","at","it","be","do",
+        "oraz","aby","dla","jako","jest","czy","tak","nie","się","oraz","oraz","bez",
+        "z","za","do","na","w","od","po","or","and","the","with","dla","oraz",
+        "produkt","produkty","item","model","new","nowa","nowy",
+    }
+    keywords = [t for t in tokens if len(t) >= 3 and t not in stop]
+    # Keep top unique tokens
+    seen = set()
+    out = []
+    for t in keywords:
+        if t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return out[:12]
+
+
+def _extract_url_keywords(url: str) -> list[str]:
+    try:
+        slug = urlparse(url).path
+    except Exception:
+        slug = ""
+    slug = slug.replace("-", " ")
+    return _tokenize_keywords(slug)
+
+
+def _name_variants(name: str, brand: str | None) -> list[str]:
+    variants = [name]
+    for sep in [" - ", " | ", " / "]:
+        if sep in name:
+            left = name.rsplit(sep, 1)[0]
+            variants.append(left)
+        if brand:
+            variants.append(name.replace(f"{sep}{brand}", ""))
+    if brand:
+        variants.append(name.replace(brand, ""))
+    cleaned: list[str] = []
+    seen = set()
+    for v in variants:
+        v = _clean_text(v).strip(" -|/")
+        if not v:
+            continue
+        if v.lower() in seen:
+            continue
+        seen.add(v.lower())
+        cleaned.append(v)
+    return cleaned
+
+
+def _score_sentence(sentence: str, keywords: set[str]) -> int:
+    score = 0
+    s_lc = sentence.lower()
+    if re.search(r"\d", sentence):
+        score += 1
+    if re.search(r"\b(cm|mm|m|l|ml|g|kg|oz|in|inch|lit|w|watt|mah|db)\b", s_lc):
+        score += 1
+    if keywords and any(k in s_lc for k in keywords):
+        score += 1
+    if len(sentence.split()) >= 8:
+        score += 1
+    return score
+
+
+def _strip_marketing_noise(text: str, keywords: set[str] | None = None) -> str:
+    keywords = keywords or set()
+    text = text.replace("•", ". ").replace(" | ", ". ")
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    cleaned: list[str] = []
+    for sentence in sentences:
+        s = sentence.strip()
+        if not s:
+            continue
+        s_lc = s.lower()
+        if ":" in s:
+            prefix, rest = s.split(":", 1)
+            if len(prefix.split()) <= 2 and not re.search(r"\d", prefix):
+                s = rest.strip()
+                s_lc = s.lower()
+        promo = False
+        if "!" in s and not re.search(r"\d", s):
+            promo = True
+        if re.search(r"[\U0001F300-\U0001FAFF]", s):
+            promo = True
+        score = _score_sentence(s, keywords)
+        if promo and score < 2:
+            continue
+        if len(s.split()) < 6 and score < 2:
+            continue
+        if s:
+            cleaned.append(s)
+    return " ".join(cleaned).strip()
+
+
+def _clean_features_text(text: str, name: str | None, url: str) -> str:
+    text = _clean_text(text)
+    if not text:
+        return ""
+    keywords = set(_tokenize_keywords(name or "") + _extract_url_keywords(url))
+
+    boilerplate = [
+        "czytaj więcej",
+        "pokaż mniej",
+        "pokaż więcej",
+        "zobacz więcej",
+        "dodaj do koszyka",
+        "add to cart",
+    ]
+    text_lc = text.lower()
+    for phrase in boilerplate:
+        idx = text_lc.find(phrase)
+        if idx != -1:
+            text = text[:idx].strip()
+            text_lc = text.lower()
+
+    if name:
+        for variant in _name_variants(name, None):
+            if not variant:
+                continue
+            words = [re.escape(w) for w in variant.split()]
+            if not words:
+                continue
+            # Match words separated by optional whitespace and dashes.
+            pattern = r"\s*[-–—]?\s*".join(words)
+            text = re.sub(pattern, "", text, flags=re.IGNORECASE).strip()
+
+    # Hard cap for short blurbs.
+    if len(text.split()) <= 30 and len(text) <= 200:
+        return _strip_marketing_noise(text, keywords) or text
+
+    parts = re.split(r"(?<=[.!?])\s+", text)
+    if len(parts) >= 2:
+        trimmed = " ".join(parts[:2]).strip()
+    else:
+        words = text.split()
+        trimmed = " ".join(words[:80]).strip()
+        if len(words) > 60:
+            trimmed = " ".join(words[:50]).strip()
+    if len(trimmed) > 420:
+        trimmed = trimmed[:420].rsplit(" ", 1)[0].strip()
+    # If there is no sentence punctuation, keep it short.
+    if not re.search(r"[.!?]", trimmed) and len(trimmed.split()) > 45:
+        trimmed = " ".join(trimmed.split()[:45]).strip()
+    # Final word cap to avoid long lists.
+    if len(trimmed.split()) > 45:
+        trimmed = " ".join(trimmed.split()[:45]).strip()
+    trimmed = _strip_marketing_noise(trimmed, keywords) or trimmed
+    return trimmed
 
 
 def _truncate_sentences(text: str, max_sentences: int = 2) -> str:
@@ -57,6 +217,76 @@ def _collect_description_blocks(soup: BeautifulSoup) -> str:
 
     blocks = _dedupe_lines(blocks)
     return " ".join(blocks).strip()
+
+
+def _strip_noise_sections(soup: BeautifulSoup) -> None:
+    noise_tokens = [
+        "related", "recommend", "upsell", "cross-sell", "crosssell", "similar",
+        "you-may-like", "youmaylike", "also-bought", "suggest", "carousel", "slider", "swiper",
+        "footer", "header", "nav", "menu", "breadcrumb", "social", "share", "newsletter",
+        "subscribe", "popup", "modal", "cookie", "consent", "banner", "reviews", "review",
+        "rating", "comment", "comments", "opinia", "opinie",
+    ]
+    for tag in soup.find_all(True):
+        if tag.name in {"html", "body"}:
+            continue
+        try:
+            class_attr = " ".join(tag.get("class", []))
+            id_attr = tag.get("id") or ""
+        except Exception:
+            continue
+        hay = f"{class_attr} {id_attr}".lower()
+        if any(tok in hay for tok in noise_tokens):
+            tag.decompose()
+
+
+def _link_density(tag) -> float:
+    try:
+        text = _clean_text(tag.get_text(" ", strip=True))
+        if not text:
+            return 0.0
+        link_text = ""
+        for a in tag.find_all("a"):
+            link_text += " " + _clean_text(a.get_text(" ", strip=True))
+        return min(1.0, len(link_text) / max(len(text), 1))
+    except Exception:
+        return 0.0
+
+
+def _score_block(tag) -> float:
+    text = _clean_text(tag.get_text(" ", strip=True))
+    if not text:
+        return 0.0
+    length = len(text)
+    if length < 80:
+        return 0.0
+    ld = _link_density(tag)
+    score = length * (1.0 - ld)
+    if tag.name in {"article", "main"}:
+        score *= 1.2
+    if tag.find(["h1", "h2", "h3"]):
+        score *= 1.05
+    return score
+
+
+def _select_main_content(soup: BeautifulSoup) -> str:
+    candidates = soup.find_all(["article", "main", "section", "div"])
+    best = None
+    best_score = 0.0
+    for tag in candidates:
+        score = _score_block(tag)
+        if score > best_score:
+            best_score = score
+            best = tag
+    if not best:
+        return ""
+    parts: list[str] = []
+    for el in best.find_all(["h1", "h2", "h3", "p", "li"]):
+        text = _clean_text(el.get_text(" ", strip=True))
+        if text and len(text.split()) >= 4:
+            parts.append(text)
+    parts = _dedupe_lines(parts)
+    return " ".join(parts).strip()
 
 
 def _collect_specs(soup: BeautifulSoup) -> list[tuple[str, str]]:
@@ -221,6 +451,8 @@ def _build_description(
 def _extract_from_html(html: str, url: str, language: str) -> str:
     html = html or ""
     soup = BeautifulSoup(html, "lxml")
+    _strip_noise_sections(soup)
+    json_ld_only = bool(get_settings().research_json_ld_only)
     # JSON-LD first
     blocks = _extract_json_ld(html)
     product = _find_product_ld(blocks)
@@ -236,8 +468,9 @@ def _extract_from_html(html: str, url: str, language: str) -> str:
         description = product.get("description")
         price, currency = _extract_price_from_ld(product)
 
-    specs = _collect_specs(soup)
-    desc_blocks = _collect_description_blocks(soup)
+    specs = [] if json_ld_only else _collect_specs(soup)
+    has_structured = bool(product and (name or description or price))
+    desc_blocks = _collect_description_blocks(soup) if (not json_ld_only and not has_structured) else ""
 
     # Fallbacks
     if not description:
@@ -252,13 +485,16 @@ def _extract_from_html(html: str, url: str, language: str) -> str:
         if soup.title and soup.title.string:
             name = soup.title.string
 
-    if not price:
+    if not price and not json_ld_only:
         text_blob = soup.get_text(" ", strip=True)
         price, currency = _extract_price_from_text(text_blob)
 
-    # Prefer longer, page-specific description blocks when available.
-    if desc_blocks and len(desc_blocks) > len(description or ""):
+    # Prefer page-specific description blocks only when structured data is missing.
+    if desc_blocks and not has_structured and len(desc_blocks) > len(description or ""):
         description = desc_blocks
+
+    keywords = set(_tokenize_keywords(name or "") + _extract_url_keywords(url))
+    description = _clean_features_text(description or "", name, url)
 
     base_desc = _build_description(
         name=name,
@@ -272,16 +508,61 @@ def _extract_from_html(html: str, url: str, language: str) -> str:
 
     # Add specs if available
     if specs:
+        allowed_spec_terms = {
+            "pojemność", "objętość", "litr", "ml", "wymiary", "materiał", "szkło",
+            "borosilikat", "szerokość", "wysokość", "głębokość", "waga",
+            "capacity", "volume", "dimensions", "material", "glass", "height", "width", "depth", "weight",
+        }
+        desc_lc = (description or "").lower()
+        if any(term in desc_lc for term in allowed_spec_terms):
+            specs = []
         spec_items = []
         for key, value in specs[:12]:
+            kv = f"{key} {value}".lower()
+            if keywords and not any(k in kv for k in keywords) and not any(t in kv for t in allowed_spec_terms):
+                continue
             spec_items.append(f"{key}: {value}")
         specs_text = "; ".join(spec_items)
-        if language.lower().startswith("pl"):
-            base_desc = f"{base_desc} Parametry: {specs_text}."
-        else:
-            base_desc = f"{base_desc} Specifications: {specs_text}."
+        if specs_text:
+            if language.lower().startswith("pl"):
+                base_desc = f"{base_desc} Parametry: {specs_text}."
+            else:
+                base_desc = f"{base_desc} Specifications: {specs_text}."
 
     return base_desc.strip()
+
+
+def _extract_main_text(html: str) -> str:
+    html = html or ""
+    soup = BeautifulSoup(html, "lxml")
+    _strip_noise_sections(soup)
+    for tag in soup.find_all(["script", "style", "noscript", "svg", "canvas"]):
+        tag.decompose()
+
+    blocks: list[str] = []
+    main_text = _select_main_content(soup)
+    if main_text:
+        blocks.append(main_text)
+
+    desc_text = _collect_description_blocks(soup)
+    if desc_text:
+        blocks.append(desc_text)
+
+    containers = soup.select("main, article, [role='main']")
+    if not containers:
+        containers = [soup.body] if soup.body else [soup]
+
+    for container in containers:
+        for el in container.find_all(["h1", "h2", "h3", "p", "li"]):
+            text = _clean_text(el.get_text(" ", strip=True))
+            if not text or len(text.split()) < 4:
+                continue
+            blocks.append(text)
+
+    blocks = _dedupe_lines(blocks)
+    text = " ".join(blocks).strip()
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
 async def _fetch_html_httpx(url: str) -> str:
@@ -293,7 +574,9 @@ async def _fetch_html_httpx(url: str) -> str:
     timeout = httpx.Timeout(15.0, connect=10.0)
     async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=timeout) as client:
         resp = await client.get(url)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            logger.info("Product extract: HTTP fetch failed (%s): %s", resp.status_code, url)
+            return ""
         logger.info("Product extract: HTTP fetch OK (%s): %s", resp.status_code, url)
         return resp.text
 
@@ -327,7 +610,7 @@ async def _try_accept_cookies(page) -> None:
             continue
 
 
-async def _fetch_html_playwright(url: str) -> str:
+async def _fetch_html_playwright(url: str, timeout_ms: int = 30000) -> str:
     try:
         from playwright.async_api import async_playwright
     except Exception as exc:  # pragma: no cover - optional dependency
@@ -342,9 +625,9 @@ async def _fetch_html_playwright(url: str) -> str:
                 locale="pl-PL",
             )
             page = await context.new_page()
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
             await _try_accept_cookies(page)
-            await page.wait_for_load_state("networkidle", timeout=30000)
+            await page.wait_for_load_state("networkidle", timeout=timeout_ms)
             html = await page.content()
             await context.close()
             logger.info("Product extract: Playwright fetch OK: %s", url)
@@ -381,4 +664,99 @@ async def extract_product_description(url: str, language: str) -> str:
             return desc
 
     logger.info("Product extract: No content extracted: %s", url)
+    return ""
+
+
+async def extract_product_summary_fast(url: str, language: str) -> str:
+    """Fast extractor: HTTP only, no Playwright."""
+    if _is_grounding_redirect(url):
+        logger.info("Product extract fast: Skip grounding redirect: %s", url)
+        return ""
+    try:
+        html = await _fetch_html_httpx(url)
+    except Exception:
+        logger.info("Product extract fast: HTTP fetch failed: %s", url)
+        return ""
+
+    if not html:
+        return ""
+
+    desc = _extract_from_html(html, url, language)
+    if desc:
+        logger.info("Product extract fast: HTTP extract OK: %s", url)
+        return desc
+
+    logger.info("Product extract fast: No content extracted: %s", url)
+    return ""
+
+
+async def extract_product_text_fast(url: str) -> str:
+    """Fast extractor: HTTP only, no Playwright. Returns main page text."""
+    if _is_grounding_redirect(url):
+        logger.info("Product text fast: Skip grounding redirect: %s", url)
+        return ""
+    try:
+        html = await _fetch_html_httpx(url)
+    except Exception:
+        logger.info("Product text fast: HTTP fetch failed: %s", url)
+        return ""
+    if not html:
+        logger.info("Product text fast: HTTP fetch failed: %s", url)
+        return ""
+    text = _extract_main_text(html)
+    if text:
+        logger.info("Product text fast: HTTP extract OK: %s", url)
+        return text
+    logger.info("Product text fast: No content extracted: %s", url)
+    return ""
+
+
+async def extract_product_summary_with_playwright(
+    url: str,
+    language: str,
+    timeout_ms: int = 15000,
+) -> str:
+    """Fallback extractor: Playwright only with shorter timeout."""
+    if _is_grounding_redirect(url):
+        logger.info("Product extract fallback: Skip grounding redirect: %s", url)
+        return ""
+    try:
+        html = await _fetch_html_playwright(url, timeout_ms=timeout_ms)
+    except Exception:
+        logger.info("Product extract fallback: Playwright fetch failed: %s", url)
+        return ""
+
+    if not html:
+        return ""
+
+    desc = _extract_from_html(html, url, language)
+    if desc:
+        logger.info("Product extract fallback: Playwright extract OK: %s", url)
+        return desc
+
+    logger.info("Product extract fallback: No content extracted: %s", url)
+    return ""
+
+
+async def extract_product_text_with_playwright(
+    url: str,
+    timeout_ms: int = 15000,
+) -> str:
+    """Fallback extractor: Playwright only with shorter timeout. Returns main page text."""
+    if _is_grounding_redirect(url):
+        logger.info("Product text fallback: Skip grounding redirect: %s", url)
+        return ""
+    try:
+        html = await _fetch_html_playwright(url, timeout_ms=timeout_ms)
+    except Exception:
+        logger.info("Product text fallback: Playwright fetch failed: %s", url)
+        return ""
+    if not html:
+        logger.info("Product text fallback: Playwright fetch failed: %s", url)
+        return ""
+    text = _extract_main_text(html)
+    if text:
+        logger.info("Product text fallback: Playwright extract OK: %s", url)
+        return text
+    logger.info("Product text fallback: No content extracted: %s", url)
     return ""

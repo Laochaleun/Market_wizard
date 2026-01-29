@@ -4,20 +4,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-import os
-import sys
-
-# Debug: Check environment during import
-print(f"DEBUG: Loading config. GOOGLE_API_KEY in os.environ: {'GOOGLE_API_KEY' in os.environ}")
-if 'GOOGLE_API_KEY' in os.environ:
-    print(f"DEBUG: Key length: {len(os.environ['GOOGLE_API_KEY'])}")
-else:
-    print("DEBUG: GOOGLE_API_KEY is MISSING from environment")
-
-from functools import lru_cache
-from pathlib import Path
-from typing import Literal
-
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -42,6 +28,10 @@ class Settings(BaseSettings):
     # LLM Settings
     llm_model: str = "gemini-2.0-flash-001"
     llm_temperature: float = 0.5
+    research_llm_model: str = "gemini-2.5-flash-lite"
+    research_playwright_fallback_limit: int = 2
+    research_playwright_timeout_ms: int = 15000
+    research_json_ld_only: bool = False
 
     # Embedding Settings
     embedding_provider: Literal["local", "openai"] = "local"

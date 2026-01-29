@@ -10,6 +10,8 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
+import logging
+
 from app.models import (
     AgentResponse,
     DemographicProfile,
@@ -51,21 +53,33 @@ class SimulationEngine:
         self.ssr_engine = ssr_engine or SSREngine(language=language, temperature=temperature)
         self.persona_manager = persona_manager or PersonaManager(language=language)
         self.llm_temperature = llm_temperature
+        self._logger = logging.getLogger(__name__)
 
     async def _generate_opinion_for_persona(
         self,
         persona: Persona,
         product_description: str,
         enable_web_search: bool = False,
+        global_sources: list[dict[str, str]] | None = None,
     ) -> tuple[Persona, str, list[str]]:
         """Generate opinion for a single persona. Returns (persona, opinion, sources)."""
-        if enable_web_search and hasattr(self.llm_client, 'generate_opinion_with_search'):
-            opinion, sources = await self.llm_client.generate_opinion_with_search(
-                persona,
-                product_description,
-                language=self.language,
-                temperature=self.llm_temperature,
-            )
+        if enable_web_search:
+            if hasattr(self.llm_client, "generate_opinion_with_sources"):
+                opinion, sources = await self.llm_client.generate_opinion_with_sources(
+                    persona,
+                    product_description,
+                    global_sources or [],
+                    language=self.language,
+                    temperature=self.llm_temperature,
+                )
+            else:
+                opinion = await self.llm_client.generate_opinion(
+                    persona,
+                    product_description,
+                    language=self.language,
+                    temperature=self.llm_temperature,
+                )
+                sources = []
         else:
             opinion = await self.llm_client.generate_opinion(
                 persona,
@@ -112,11 +126,31 @@ class SimulationEngine:
         # Step 2: Generate opinions with concurrency control
         opinions: List[tuple[Persona, str, list[str]]] = []
         semaphore = asyncio.Semaphore(concurrency_limit)
+        global_sources: list[dict[str, str]] = []
+
+        if enable_web_search and hasattr(self.llm_client, "generate_market_sources"):
+            try:
+                global_sources = await self.llm_client.generate_market_sources(
+                    product_description,
+                    language=self.language,
+                )
+            except Exception as e:
+                print(f"⚠️ Market sources error: {e}")
+                global_sources = []
+        if enable_web_search:
+            self._logger.info("Web search enabled | global_sources=%s", len(global_sources))
+            if not global_sources:
+                self._logger.warning(
+                    "Web search enabled but no sources returned; proceeding without sources."
+                )
 
         async def generate_with_limit(persona: Persona) -> tuple[Persona, str, list[str]]:
             async with semaphore:
                 return await self._generate_opinion_for_persona(
-                    persona, product_description, enable_web_search
+                    persona,
+                    product_description,
+                    enable_web_search,
+                    global_sources,
                 )
 
         tasks = [generate_with_limit(p) for p in personas]
@@ -124,7 +158,7 @@ class SimulationEngine:
 
         # Filter out failed generations (exceptions)
         valid_opinions: List[tuple[Persona, str, list[str]]] = []
-        all_sources: List[str] = []
+        all_sources: List[str] = [s.get("url") for s in global_sources if s.get("url")]
         for result in opinions:
             if isinstance(result, Exception):
                 # Log error but continue
@@ -145,13 +179,14 @@ class SimulationEngine:
 
         # Step 4: Build agent responses
         agent_responses: List[AgentResponse] = []
-        for (persona, _, _), ssr_result in zip(valid_opinions, ssr_results):
+        for (persona, _, sources), ssr_result in zip(valid_opinions, ssr_results):
             agent_responses.append(
                 AgentResponse(
                     persona=persona,
                     text_response=ssr_result.text_response,
                     likert_pmf=ssr_result.likert_pmf,
                     likert_score=ssr_result.expected_score,
+                    sources=sources,
                 )
             )
 
