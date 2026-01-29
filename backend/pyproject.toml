@@ -18,6 +18,7 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings",
     "pandas>=2.0",
+    "pytz",
     "google-genai>=1.50",  # New Gemini SDK
     "openai>=1.50",
     "sentence-transformers>=3.0",  # For local BGE-M3 embeddings
