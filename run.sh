@@ -24,6 +24,8 @@ if [ ! -d "venv" ]; then
     pip install --upgrade pip -q
     echo -e "${GREEN}📦 Instaluję zależności (może potrwać kilka minut)...${NC}"
     cd backend && pip install -e . && cd ..
+    echo -e "${GREEN}🌍 Instaluję przeglądarki Playwright...${NC}"
+    playwright install chromium
 else
     source venv/bin/activate
 fi

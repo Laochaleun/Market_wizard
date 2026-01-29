@@ -17,6 +17,7 @@ dependencies = [
     "numpy>=2.0",
     "pydantic>=2.0",
     "pydantic-settings",
+    "pandas>=2.0",
     "google-genai>=1.50",  # New Gemini SDK
     "openai>=1.50",
     "sentence-transformers>=3.0",  # For local BGE-M3 embeddings
@@ -27,6 +28,7 @@ dependencies = [
     "playwright>=1.42",
     "matplotlib>=3.8.0",
     "python-dotenv",
+    "weasyprint>=61.0",
 ]
 
 [project.optional-dependencies]
