@@ -48,7 +48,7 @@ pip install -e .
 ### 3. Konfiguracja
 
 ```bash
-cp backend/.env.example backend/.env
+cp backend/.env.sample backend/.env
 ```
 
 Edytuj `backend/.env`:
@@ -162,6 +162,8 @@ Market_wizard/
 |---------|------|----------|
 | `GOOGLE_API_KEY` | **Wymagane** - klucz API Google | - |
 | `LLM_MODEL` | Model Gemini | `gemini-2.0-flash-001` |
+| `RESEARCH_LLM_MODEL` | Model do groundingu (wyszukiwania źródeł) | `gemini-2.5-flash-lite` |
+| `RESEARCH_INTERPRETATION_MODEL` | Model do interpretacji treści źródeł | `gemini-3-flash-preview` |
 | `EMBEDDING_MODEL` | Model embeddingów | `BAAI/bge-m3` (lokalny) |
 | `GUS_API_KEY` | Opcjonalny - dla API GUS | - |
 
@@ -170,6 +172,10 @@ Market_wizard/
 Wspierane modele:
 - `gemini-2.0-flash-001` (domyślny, szybki)
 - `gemini-2.0-pro-001` (lepszy jakościowo)
+  
+Dla research (źródła i interpretacja):
+- `RESEARCH_LLM_MODEL` (grounding) domyślnie `gemini-2.5-flash-lite`
+- `RESEARCH_INTERPRETATION_MODEL` (interpretacja danych) domyślnie `gemini-3-flash-preview`
 
 ## 📚 Metodologia SSR
 
