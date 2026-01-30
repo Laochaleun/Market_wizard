@@ -68,3 +68,6 @@ data/
 
 # Temp
 temp_development_files/
+
+# Local report outputs
+reports/
