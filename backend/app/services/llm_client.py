@@ -111,11 +111,10 @@ class GeminiClient:
         model_name = getattr(settings, "report_analysis_model", "gemini-3-pro-preview")
         loop = asyncio.get_event_loop()
         self._logger.info(
-            "URL extraction request | model=%s | language=%s | prompt_chars=%s | url=%s",
-            self.model_name,
+            "Report analysis request | model=%s | language=%s | prompt_chars=%s",
+            model_name,
             language.value,
             len(prompt),
-            url,
         )
         response = await loop.run_in_executor(
             None,

@@ -663,16 +663,28 @@ def target_audience_to_ui(
 
 import re
 
+
+def normalize_url(text: str) -> str:
+    """Normalize URLs by adding https:// when scheme is missing."""
+    value = (text or "").strip()
+    if not value:
+        return value
+    if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", value):
+        return value
+    if re.match(r"^[A-Z0-9.-]+\.[A-Z]{2,}(/.*)?$", value, re.IGNORECASE):
+        return f"https://{value}"
+    return value
+
 def is_url(text: str) -> bool:
     """Check if text is a URL."""
-    url_pattern = re.compile(
-        r'^https?://'  # http:// or https://
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain
-        r'localhost|'  # localhost
-        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # IP
-        r'(?::\d+)?'  # optional port
-        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
-    return bool(url_pattern.match(text.strip()))
+    value = (text or "").strip()
+    if not value:
+        return False
+    if re.match(r"^https?://", value, re.IGNORECASE):
+        return True
+    if re.match(r"^www\.", value, re.IGNORECASE):
+        return True
+    return False
 
 
 def _shorten_extracted(text: str, lang: Language) -> str:
@@ -697,7 +709,7 @@ async def process_product_input(
     Returns:
         (product_description, status_message)
     """
-    product_input = product_input.strip()
+    product_input = normalize_url(product_input)
     
     def _looks_like_full_extraction(text: str) -> bool:
         text = text.strip()
@@ -726,19 +738,6 @@ async def process_product_input(
             return text
         return f"{text} {label}: {url}"
 
-    def _fallback_from_url(url: str) -> str:
-        from urllib.parse import urlparse, unquote
-
-        parsed = urlparse(url)
-        slug = parsed.path.rstrip("/").split("/")[-1]
-        slug = unquote(slug)
-        slug = slug.replace("-", " ").replace("_", " ").strip()
-        if not slug:
-            slug = "produkt z podanego URL" if language == Language.PL else "product from provided URL"
-        if language == Language.PL:
-            return f"{slug}. Opis na podstawie URL (brak pełnej ekstrakcji)."
-        return f"{slug}. Description based on URL (full extraction unavailable)."
-
     if is_url(product_input):
         # Extract product from URL using Gemini
         from app.services.llm_client import get_llm_client
@@ -748,39 +747,84 @@ async def process_product_input(
             if hasattr(client, 'extract_product_from_url'):
                 status = "🔗 Extracting product from URL..." if language == Language.EN else "🔗 Pobieranie produktu z URL..."
                 product_description = await client.extract_product_from_url(product_input, language)
-                if product_description:
-                    if _looks_like_full_extraction(product_description):
-                        product_description = _attach_source(product_description, product_input)
-                        return product_description, f"✅ Extracted from: {product_input}"
-                    partial = _attach_source(product_description, product_input)
-                    warn = (
-                        "⚠️ Partial extraction; using available URL data."
-                        if language == Language.EN
-                        else "⚠️ Ekstrakcja niepełna — używam dostępnych danych z URL."
-                    )
-                    return partial, warn
-                fallback = _fallback_from_url(product_input)
-                fallback = _attach_source(fallback, product_input)
+                if product_description and _looks_like_full_extraction(product_description):
+                    product_description = _attach_source(product_description, product_input)
+                    return product_description, f"✅ Extracted from: {product_input}"
                 warn = (
-                    "⚠️ Extraction too short; using URL fallback."
+                    "❌ URL extraction incomplete; please paste full product description manually."
                     if language == Language.EN
-                    else "⚠️ Ekstrakcja zbyt krótka — używam opisu na podstawie URL."
+                    else "❌ Ekstrakcja z URL niepełna — wklej pełny opis produktu ręcznie."
                 )
-                return fallback, warn
-            fallback = _attach_source(_fallback_from_url(product_input), product_input)
+                return "", warn
             warn = (
-                "⚠️ URL extraction unavailable; using URL fallback."
+                "❌ URL extraction unavailable; please paste full product description manually."
                 if language == Language.EN
-                else "⚠️ Ekstrakcja z URL niedostępna — używam opisu na podstawie URL."
+                else "❌ Ekstrakcja z URL niedostępna — wklej pełny opis produktu ręcznie."
             )
-            return fallback, warn
+            return "", warn
         except Exception as e:
             # Fallback to using URL as-is
-            fallback = _fallback_from_url(product_input)
-            fallback = _attach_source(fallback, product_input)
-            return fallback, f"⚠️ Could not fetch URL: {e}"
+            warn = (
+                f"❌ Could not fetch URL: {e}"
+                if language == Language.EN
+                else f"❌ Nie udało się pobrać URL: {e}"
+            )
+            return "", warn
     
     return product_input, ""
+
+
+async def _preview_extract_from_input_async(
+    product_input: str,
+    lang_code: str,
+    last_url: str,
+):
+    """Extract product details from URL with a visible in-flight status."""
+    lang = get_lang(lang_code)
+    normalized = normalize_url(product_input)
+    if not is_url(normalized):
+        msg = "❌ To nie wygląda jak URL." if lang == Language.PL else "❌ This doesn't look like a URL."
+        yield msg, "", "", last_url or ""
+        return
+    if normalized == (last_url or ""):
+        yield gr.update(), gr.update(), gr.update(), last_url
+        return
+
+    logging.getLogger(__name__).info("Manual URL extraction start: %s", normalized)
+    waiting = "⏳ Pobieranie danych z URL..." if lang == Language.PL else "⏳ Fetching data from URL..."
+    yield waiting, "", "", last_url or ""
+
+    try:
+        description, status = await process_product_input(normalized, lang)
+    except Exception as exc:
+        logging.getLogger(__name__).exception("Manual URL extraction failed")
+        msg = (
+            f"❌ Nie udało się pobrać URL: {exc}"
+            if lang == Language.PL
+            else f"❌ Could not fetch URL: {exc}"
+        )
+        yield msg, "", "", normalized
+        return
+    if not description:
+        logging.getLogger(__name__).warning("Manual URL extraction failed: %s", status)
+        yield status or "", "", "", normalized
+        return
+    preview = _shorten_extracted(description, lang)
+    if lang == Language.PL:
+        preview = f"**Wyciągnięte dane:** {preview}"
+        full = f"**Pełny opis:** {description}"
+        done = "✅ Pobrano dane z URL."
+    else:
+        preview = f"**Extracted data:** {preview}"
+        full = f"**Full description:** {description}"
+        done = "✅ Extracted data from URL."
+    yield done, preview, full, normalized
+    return
+
+
+def update_extract_button_label(lang_code: str):
+    lang = get_lang(lang_code)
+    return gr.update(value=get_label(lang, "extract_url"))
 
 
 # === Main Simulation Tab ===
@@ -2020,6 +2064,7 @@ def create_interface():
         suppress_dirty = gr.State(value=False)
         allow_discard_state = gr.State(value=False)
         allow_discard_true = gr.State(value=True)
+        last_url_state = gr.State(value="")
         
         gr.Markdown("*SSR-based purchase intent simulation using AI*")
         gr.Markdown("---")
@@ -2034,7 +2079,12 @@ def create_interface():
                             label="Product description / Opis produktu",
                             placeholder="E.g. Activated charcoal toothpaste, 75ml, price $9.99",
                             lines=5,
+                            elem_id="product_input_main",
                         )
+                        extract_url_btn = gr.Button(
+                            value=get_label(Language.PL, "extract_url"),
+                        )
+                        extract_status = gr.Markdown("")
                         extracted_product_preview = gr.Markdown("")
                         with gr.Accordion("📄 Extracted details / Wyciągnięte dane", open=False):
                             extracted_product_full = gr.Markdown("")
@@ -2780,6 +2830,17 @@ def create_interface():
                 inputs=mark_dirty_inputs,
                 outputs=[project_dirty],
             )
+
+        extract_url_btn.click(
+            fn=_preview_extract_from_input_async,
+            inputs=[product_input, language_select, last_url_state],
+            outputs=[extract_status, extracted_product_preview, extracted_product_full, last_url_state],
+        )
+        language_select.change(
+            fn=update_extract_button_label,
+            inputs=[language_select],
+            outputs=[extract_url_btn],
+        )
 
         gr.Markdown(
             """

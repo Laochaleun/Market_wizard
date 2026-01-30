@@ -335,6 +335,7 @@ UI_LABELS: Dict[Language, Dict[str, str]] = {
         "error_no_product": "❌ Wprowadź opis produktu",
         "error_no_variants": "❌ Wprowadź opisy obu wariantów",
         "success": "✅ Symulacja zakończona pomyślnie",
+        "extract_url": "🔗 Pobierz z URL",
     },
     Language.EN: {
         "app_title": "🔮 Market Wizard",
@@ -387,6 +388,7 @@ UI_LABELS: Dict[Language, Dict[str, str]] = {
         "error_no_product": "❌ Please enter a product description",
         "error_no_variants": "❌ Please enter descriptions for both variants",
         "success": "✅ Simulation completed successfully",
+        "extract_url": "🔗 Fetch from URL",
     },
 }
 
