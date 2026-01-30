@@ -1258,12 +1258,13 @@ def export_report(lang_code: str, export_format: str, only_cited_sources: bool):
         logger = logging.getLogger(__name__)
         logger.info(f"Report exported to: {output_path} | exists={output_path.exists()}")
         
-        # Return download URL (bypasses Gradio file handling bug)
+        # Return download URL as HTML link (bypasses Gradio file handling bug)
         download_url = f"/download-report/{output_path.name}"
+        download_link = f'<a href="{download_url}" download="{output_path.name}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:white;text-decoration:none;border-radius:6px;font-weight:bold;">📥 Download {output_path.name}</a>'
         if lang == Language.EN:
-            return download_url, f"✅ Ready: [Click to download {output_path.name}]({download_url})"
+            return download_link, f"✅ Ready to download"
         else:
-            return download_url, f"✅ Gotowe: [Kliknij aby pobrać {output_path.name}]({download_url})"
+            return download_link, f"✅ Gotowe do pobrania"
 
     
     except Exception as e:
@@ -1591,12 +1592,13 @@ def export_focus_group(lang_code: str, export_format: str) -> tuple[str | None, 
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(html_content)
     
-    # Return download URL (bypasses Gradio file handling bug)
+    # Return download URL as HTML link (bypasses Gradio file handling bug)
     download_url = f"/download-report/{filepath.name}"
+    download_link = f'<a href="{download_url}" download="{filepath.name}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:white;text-decoration:none;border-radius:6px;font-weight:bold;">📥 Download {filepath.name}</a>'
     if lang == Language.EN:
-        return download_url, f"✅ Ready: [Click to download {filepath.name}]({download_url})"
+        return download_link, f"✅ Ready to download"
     else:
-        return download_url, f"✅ Gotowe: [Kliknij aby pobrać {filepath.name}]({download_url})"
+        return download_link, f"✅ Gotowe do pobrania"
 
 
 # === Project Management ===
@@ -2316,7 +2318,7 @@ def create_interface():
                     )
                     export_btn = gr.Button("💾 Export / Eksportuj", variant="primary", scale=1)
                 export_status = gr.Markdown("")
-                export_file = gr.File(label="📥 Download / Pobierz", visible=True)
+                export_file = gr.HTML(label="📥 Download / Pobierz")
 
                 report_btn.click(
                     fn=generate_report,
@@ -2484,7 +2486,7 @@ def create_interface():
                         min_width=120,
                     )
                     fg_export_btn = gr.Button("📥 Export", variant="secondary")
-                    fg_export_file = gr.File(label="Download", visible=True)
+                    fg_export_file = gr.HTML(label="Download")
                     fg_export_status = gr.Markdown("")
                 
                 fg_export_btn.click(
