@@ -1214,9 +1214,8 @@ def export_report(lang_code: str, export_format: str, only_cited_sources: bool):
     
     try:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        # Use project-relative 'reports' directory instead of system temp
-        output_dir = Path("reports").resolve()
+        # Use project-relative 'reports' directory (works both locally and in Docker)
+        output_dir = PROJECT_BASE_DIR / "reports"
         output_dir.mkdir(parents=True, exist_ok=True)
         
         if export_format == "PDF":
@@ -1579,8 +1578,8 @@ def export_focus_group(lang_code: str, export_format: str) -> tuple[str | None, 
         try:
             from weasyprint import HTML
             filename = f"focus_group_{timestamp}.pdf"
-            # Use project-relative 'reports' directory
-            output_dir = Path("reports").resolve()
+            # Use project-relative 'reports' directory (works both locally and in Docker)
+            output_dir = PROJECT_BASE_DIR / "reports"
             output_dir.mkdir(parents=True, exist_ok=True)
             filepath = output_dir / filename
             HTML(string=html_content).write_pdf(str(filepath))
@@ -1588,7 +1587,7 @@ def export_focus_group(lang_code: str, export_format: str) -> tuple[str | None, 
             return None, "❌ PDF export requires weasyprint. Install with: pip install weasyprint"
     else:
         filename = f"focus_group_{timestamp}.html"
-        output_dir = Path("reports").resolve()
+        output_dir = PROJECT_BASE_DIR / "reports"
         output_dir.mkdir(parents=True, exist_ok=True)
         filepath = output_dir / filename
         with open(filepath, "w", encoding="utf-8") as f:
@@ -3046,9 +3045,10 @@ def create_interface():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    # Ensure reports directory exists
-    reports_dir = Path("reports").resolve()
+    # Ensure reports directory exists (using same path as export functions)
+    reports_dir = PROJECT_BASE_DIR / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
+    logging.getLogger(__name__).info(f"Reports directory: {reports_dir}")
     demo = create_interface()
     demo.launch(
         server_name="0.0.0.0",
