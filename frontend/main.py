@@ -748,9 +748,17 @@ async def process_product_input(
             if hasattr(client, 'extract_product_from_url'):
                 status = "🔗 Extracting product from URL..." if language == Language.EN else "🔗 Pobieranie produktu z URL..."
                 product_description = await client.extract_product_from_url(product_input, language)
-                if _looks_like_full_extraction(product_description):
-                    product_description = _attach_source(product_description, product_input)
-                    return product_description, f"✅ Extracted from: {product_input}"
+                if product_description:
+                    if _looks_like_full_extraction(product_description):
+                        product_description = _attach_source(product_description, product_input)
+                        return product_description, f"✅ Extracted from: {product_input}"
+                    partial = _attach_source(product_description, product_input)
+                    warn = (
+                        "⚠️ Partial extraction; using available URL data."
+                        if language == Language.EN
+                        else "⚠️ Ekstrakcja niepełna — używam dostępnych danych z URL."
+                    )
+                    return partial, warn
                 fallback = _fallback_from_url(product_input)
                 fallback = _attach_source(fallback, product_input)
                 warn = (

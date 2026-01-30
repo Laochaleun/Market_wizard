@@ -97,23 +97,25 @@ class GeminiClient:
         import json as _json
 
         prompt = get_report_analysis_prompt(language, _json.dumps(payload, ensure_ascii=True))
+        settings = get_settings()
+        thinking_budget = getattr(settings, "report_analysis_thinking_budget", 256)
         config = types.GenerateContentConfig(
             temperature=0.2,
-            max_output_tokens=1200,
+            max_output_tokens=8192,
             thinking_config=types.ThinkingConfig(
-                thinking_budget=256,
+                thinking_budget=thinking_budget,
                 include_thoughts=False,
             ),
         )
 
-        settings = get_settings()
         model_name = getattr(settings, "report_analysis_model", "gemini-3-pro-preview")
         loop = asyncio.get_event_loop()
         self._logger.info(
-            "Report analysis request | model=%s | language=%s | prompt_chars=%s",
-            model_name,
+            "URL extraction request | model=%s | language=%s | prompt_chars=%s | url=%s",
+            self.model_name,
             language.value,
             len(prompt),
+            url,
         )
         response = await loop.run_in_executor(
             None,
@@ -123,13 +125,14 @@ class GeminiClient:
                 config=config,
             ),
         )
-        raw = (response.text or "").strip()
+        raw = self._extract_response_text(response).strip()
         self._logger.info(
             "Report analysis response | model=%s | text_len=%s",
             model_name,
             len(raw),
         )
         if not raw:
+            self._log_report_analysis_debug(response, model_name, language)
             self._logger.warning(
                 "Report analysis empty response | model=%s | language=%s | finish_reason=%s",
                 model_name,
@@ -146,6 +149,50 @@ class GeminiClient:
                 )
             }
         return self._parse_report_analysis_json(raw)
+
+    @staticmethod
+    def _extract_response_text(response: object) -> str:
+        text = getattr(response, "text", None) or ""
+        if text:
+            return text
+        candidates = getattr(response, "candidates", None) or []
+        for cand in candidates:
+            content = getattr(cand, "content", None)
+            parts = getattr(content, "parts", None) or []
+            collected: list[str] = []
+            for part in parts:
+                part_text = getattr(part, "text", None)
+                if part_text:
+                    collected.append(part_text)
+            if collected:
+                return "\n".join(collected)
+        return ""
+
+    def _log_report_analysis_debug(self, response: object, model_name: str, language: Language) -> None:
+        candidates = getattr(response, "candidates", None) or []
+        finish_reason = None
+        part_types: list[str] = []
+        part_sizes: list[int] = []
+        if candidates:
+            finish_reason = getattr(candidates[0], "finish_reason", None)
+            content = getattr(candidates[0], "content", None)
+            parts = getattr(content, "parts", None) or []
+            for part in parts:
+                part_text = getattr(part, "text", None)
+                if part_text is not None:
+                    part_types.append("text")
+                    part_sizes.append(len(part_text))
+                else:
+                    part_types.append(type(part).__name__)
+        self._logger.info(
+            "Report analysis debug | model=%s | language=%s | candidates=%s | finish_reason=%s | part_types=%s | part_sizes=%s",
+            model_name,
+            language.value,
+            len(candidates),
+            finish_reason,
+            part_types,
+            part_sizes,
+        )
 
     @staticmethod
     def _parse_report_analysis_json(raw: str) -> dict[str, str]:
