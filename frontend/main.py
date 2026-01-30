@@ -1258,10 +1258,12 @@ def export_report(lang_code: str, export_format: str, only_cited_sources: bool):
         logger = logging.getLogger(__name__)
         logger.info(f"Report exported to: {output_path} | exists={output_path.exists()}")
         
+        # Return download URL (bypasses Gradio file handling bug)
+        download_url = f"/download-report/{output_path.name}"
         if lang == Language.EN:
-            return str(output_path), f"✅ Exported: {output_path.name}"
+            return download_url, f"✅ Ready: [Click to download {output_path.name}]({download_url})"
         else:
-            return str(output_path), f"✅ Wyeksportowano: {output_path.name}"
+            return download_url, f"✅ Gotowe: [Kliknij aby pobrać {output_path.name}]({download_url})"
 
     
     except Exception as e:
@@ -1589,8 +1591,12 @@ def export_focus_group(lang_code: str, export_format: str) -> tuple[str | None, 
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(html_content)
     
-    msg = f"✅ Exported to {filename}" if lang == Language.EN else f"✅ Wyeksportowano do {filename}"
-    return str(filepath), msg
+    # Return download URL (bypasses Gradio file handling bug)
+    download_url = f"/download-report/{filepath.name}"
+    if lang == Language.EN:
+        return download_url, f"✅ Ready: [Click to download {filepath.name}]({download_url})"
+    else:
+        return download_url, f"✅ Gotowe: [Kliknij aby pobrać {filepath.name}]({download_url})"
 
 
 # === Project Management ===
@@ -3040,10 +3046,37 @@ def create_interface():
 
 
 if __name__ == "__main__":
+    from fastapi import FastAPI, HTTPException
+    from fastapi.responses import FileResponse
+    from starlette.routing import Route
+    
     logging.basicConfig(level=logging.INFO)
-    # Log temp directory - Gradio auto-serves files from tempfile.gettempdir()
-    logging.getLogger(__name__).info(f"System temp directory: {tempfile.gettempdir()}")
+    logger = logging.getLogger(__name__)
+    logger.info(f"System temp directory: {tempfile.gettempdir()}")
+    
     demo = create_interface()
+    app = demo.app  # Get underlying FastAPI/Starlette app
+    
+    # Add download endpoint that bypasses Gradio's file handling
+    @app.get("/download-report/{filename}")
+    async def download_report(filename: str):
+        """Direct file download endpoint - bypasses Gradio 6.x file handling bug."""
+        filepath = Path(tempfile.gettempdir()) / filename
+        if not filepath.exists():
+            logger.error(f"Download failed - file not found: {filepath}")
+            raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+        
+        # Determine media type based on extension
+        media_type = "application/pdf" if filename.endswith(".pdf") else "text/html"
+        logger.info(f"Serving download: {filepath}")
+        return FileResponse(
+            path=str(filepath),
+            filename=filename,
+            media_type=media_type,
+        )
+    
+    logger.info("Download endpoint registered at /download-report/{filename}")
+    
     demo.launch(
         server_name="0.0.0.0",
         server_port=7860,
