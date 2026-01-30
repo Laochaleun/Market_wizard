@@ -6,7 +6,7 @@ import logging
 
 from app.config import get_settings
 from app.models import Persona
-from app.i18n import Language, get_persona_prompt
+from app.i18n import Language, get_persona_prompt, get_report_analysis_prompt
 
 
 class LLMClient(Protocol):
@@ -52,7 +52,6 @@ class GeminiClient:
     ) -> str:
         """Generate opinion using Gemini."""
         from google.genai import types
-        
         # Get language-specific prompt from i18n module
         prompt = get_persona_prompt(
             language=language,
@@ -68,13 +67,13 @@ class GeminiClient:
         # Use synchronous call wrapped for async (genai doesn't have native async yet)
         import asyncio
         loop = asyncio.get_event_loop()
-        
+
         temp = self.temperature if temperature is None else temperature
         config = types.GenerateContentConfig(
             temperature=temp,
-            max_output_tokens=2048,  # Enough for full responses
+            max_output_tokens=2048,
         )
-        
+        loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
             None,
             lambda: self.client.models.generate_content(
@@ -85,6 +84,99 @@ class GeminiClient:
         )
 
         return response.text or ""
+
+    async def generate_report_analysis(
+        self,
+        *,
+        payload: dict,
+        language: Language = Language.PL,
+    ) -> dict[str, str]:
+        """Generate narrative report analysis from simulation payload."""
+        from google.genai import types
+        import asyncio
+        import json as _json
+
+        prompt = get_report_analysis_prompt(language, _json.dumps(payload, ensure_ascii=True))
+        config = types.GenerateContentConfig(
+            temperature=0.2,
+            max_output_tokens=1200,
+            thinking_config=types.ThinkingConfig(
+                thinking_budget=256,
+                include_thoughts=False,
+            ),
+        )
+
+        settings = get_settings()
+        model_name = getattr(settings, "report_analysis_model", "gemini-3-pro-preview")
+        loop = asyncio.get_event_loop()
+        self._logger.info(
+            "Report analysis request | model=%s | language=%s | prompt_chars=%s",
+            model_name,
+            language.value,
+            len(prompt),
+        )
+        response = await loop.run_in_executor(
+            None,
+            lambda: self.client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=config,
+            ),
+        )
+        raw = (response.text or "").strip()
+        self._logger.info(
+            "Report analysis response | model=%s | text_len=%s",
+            model_name,
+            len(raw),
+        )
+        if not raw:
+            self._logger.warning(
+                "Report analysis empty response | model=%s | language=%s | finish_reason=%s",
+                model_name,
+                language.value,
+                getattr(response.candidates[0], "finish_reason", None) if getattr(response, "candidates", None) else None,
+            )
+            return {
+                "narrative": (
+                    "Analiza niedostępna: model gemini-3-pro-preview zwrócił pustą odpowiedź. "
+                    "Sprawdź dostęp do modelu w Google AI/Vertex."
+                    if language == Language.PL
+                    else "Analysis unavailable: gemini-3-pro-preview returned an empty response. "
+                         "Check model access in Google AI/Vertex."
+                )
+            }
+        return self._parse_report_analysis_json(raw)
+
+    @staticmethod
+    def _parse_report_analysis_json(raw: str) -> dict[str, str]:
+        import json as _json
+        import re as _re
+
+        if not raw:
+            return {}
+        if "```" in raw:
+            raw = _re.sub(r"```(?:json)?", "", raw, flags=_re.IGNORECASE).strip()
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            # Fallback: return raw narrative if model ignored JSON format.
+            return {"narrative": raw.strip()} if raw.strip() else {}
+        try:
+            data = _json.loads(raw[start:end + 1])
+        except Exception:
+            return {"narrative": raw.strip()} if raw.strip() else {}
+        if not isinstance(data, dict):
+            return {}
+        narrative = str(data.get("narrative") or "").strip()
+        agent_summary = str(data.get("agent_summary") or "").strip()
+        recommendations = str(data.get("recommendations") or "").strip()
+        if not (narrative or agent_summary or recommendations):
+            return {"narrative": raw.strip()} if raw.strip() else {}
+        return {
+            "narrative": narrative,
+            "agent_summary": agent_summary,
+            "recommendations": recommendations,
+        }
 
     def _load_research_cache(self) -> None:
         import json
@@ -154,6 +246,15 @@ class GeminiClient:
             "sources": sources,
         }
         self._save_research_cache()
+
+    def get_cached_market_sources(
+        self,
+        product_description: str,
+        language: Language,
+    ) -> list[dict[str, str]] | None:
+        """Return cached market sources without triggering a new search."""
+        key = self._make_research_cache_key(product_description, language)
+        return self._get_cached_sources(key)
 
     def _select_sources_for_persona(
         self,
@@ -1100,15 +1201,15 @@ YOUR RESPONSE (as a consumer):
 Answer naturally, as in conversation. Mention specific products and prices you found."""
 
         # Enable Google Search grounding
+        # Enable Google Search grounding
         grounding_tool = types.Tool(google_search=types.GoogleSearch())
-        
+
         temp = self.temperature if temperature is None else temperature
         config = types.GenerateContentConfig(
             tools=[grounding_tool],
             temperature=temp,
             max_output_tokens=2048,
         )
-        
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
             None,
@@ -1181,15 +1282,22 @@ IMPORTANT:
 - Maximum 2-3 sentences"""
 
         # Enable URL Context tool
+        # Enable URL Context tool
         url_context_tool = types.Tool(url_context=types.UrlContext())
-        
+
         config = types.GenerateContentConfig(
             tools=[url_context_tool],
             temperature=0.1,  # Very low temp for factual extraction
             max_output_tokens=300,
         )
-        
+
         loop = asyncio.get_event_loop()
+        self._logger.info(
+            "Report analysis request | model=%s | language=%s | prompt_chars=%s",
+            model_name,
+            language.value,
+            len(prompt),
+        )
         response = await loop.run_in_executor(
             None,
             lambda: self.client.models.generate_content(
@@ -1310,3 +1418,16 @@ def get_llm_client(model_override: str | None = None) -> LLMClient:
         )
     else:
         raise ValueError(f"Unknown model: {model}")
+
+
+def get_report_analysis_client() -> GeminiClient | None:
+    """Return a Gemini client for report analysis, if configured."""
+    settings = get_settings()
+    if not settings.google_api_key:
+        return None
+    model = getattr(settings, "report_analysis_model", "gemini-3-pro-preview")
+    return GeminiClient(
+        api_key=settings.google_api_key,
+        model=model,
+        temperature=settings.llm_temperature,
+    )

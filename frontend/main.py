@@ -37,8 +37,10 @@ from app.services import (
     FocusGroupEngine,
     ProjectStore,
 )
+from app.services.llm_client import get_report_analysis_client
 from app.services.report_generator import generate_html_report, save_report
 from app.i18n import Language, get_label
+from app.config import get_settings
 
 
 # Store last simulation result for report generation
@@ -56,6 +58,8 @@ _last_price_analysis_result = None
 _last_price_analysis_inputs = None
 
 _last_focus_group_inputs = None
+_last_report_analysis = None
+_last_report_analysis_key = None
 
 
 # === Helper Functions ===
@@ -104,6 +108,80 @@ def format_opinion(agent_response, lang: Language) -> str:
             f"📊 Score: **{agent_response.likert_score:.2f}/5**\n"
             f"---"
         )
+
+
+def _shorten_text(text: str, max_chars: int = 400) -> str:
+    text = (text or "").strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3].rstrip() + "..."
+
+
+def _build_report_analysis_payload(
+    result: SimulationResult,
+    product_description: str,
+    lang: Language,
+) -> dict:
+    scores = [r.likert_score for r in result.agent_responses]
+    incomes = [r.persona.income for r in result.agent_responses]
+    ages = [r.persona.age for r in result.agent_responses]
+    dist = result.aggregate_distribution
+
+    sorted_responses = sorted(result.agent_responses, key=lambda r: r.likert_score, reverse=True)
+    top = sorted_responses[:6]
+    bottom = sorted_responses[-6:] if len(sorted_responses) > 6 else []
+
+    def pack_response(r):
+        return {
+            "score": round(r.likert_score, 2),
+            "text": _shorten_text(r.text_response),
+            "persona": {
+                "age": r.persona.age,
+                "gender": r.persona.gender,
+                "location": r.persona.location,
+                "income": r.persona.income,
+                "occupation": r.persona.occupation,
+            },
+        }
+
+    payload = {
+        "language": lang.value,
+        "product_description": product_description,
+        "n_agents": result.n_agents,
+        "mean_score": float(np.mean(scores)) if scores else None,
+        "std_score": float(np.std(scores)) if scores else None,
+        "min_score": float(min(scores)) if scores else None,
+        "max_score": float(max(scores)) if scores else None,
+        "distribution_pct": {
+            "1": round(dist.scale_1 * 100, 1),
+            "2": round(dist.scale_2 * 100, 1),
+            "3": round(dist.scale_3 * 100, 1),
+            "4": round(dist.scale_4 * 100, 1),
+            "5": round(dist.scale_5 * 100, 1),
+        },
+        "demographics": {
+            "mean_age": round(float(np.mean(ages)), 1) if ages else None,
+            "mean_income": round(float(np.mean(incomes)), 0) if incomes else None,
+            "gender_m": sum(1 for r in result.agent_responses if r.persona.gender == "M"),
+            "gender_f": sum(1 for r in result.agent_responses if r.persona.gender == "F"),
+        },
+        "top_responses": [pack_response(r) for r in top],
+        "bottom_responses": [pack_response(r) for r in bottom],
+        "sources_count": len(result.web_sources or []),
+    }
+    return payload
+
+
+async def _generate_report_analysis_async(
+    result: SimulationResult,
+    product_description: str,
+    lang: Language,
+) -> dict[str, str] | None:
+    client = get_report_analysis_client()
+    if not client:
+        return None
+    payload = _build_report_analysis_payload(result, product_description, lang)
+    return await client.generate_report_analysis(payload=payload, language=lang)
 
 
 def build_simulation_summary(result: SimulationResult, lang: Language) -> str:
@@ -320,14 +398,17 @@ def mark_dirty(
     variant_a_input: str,
     variant_b_input: str,
     ab_n_agents: int,
+    ab_enable_web_search: bool,
     price_product: str,
     price_min: float,
     price_max: float,
     price_points: int,
     price_n_agents: int,
+    price_enable_web_search: bool,
     fg_product: str,
     fg_participants: int,
     fg_rounds: int,
+    fg_enable_web_search: bool,
     suppress_dirty: bool,
 ) -> bool:
     """Set project dirty flag only when inputs differ from defaults."""
@@ -341,19 +422,22 @@ def mark_dirty(
         "income_level": "Wszystkie",
         "location_type": "Wszystkie",
         "n_agents": 20,
-        "enable_web_search": False,
+        "enable_web_search": True,
         "temperature": 0.01,
         "variant_a_input": "",
         "variant_b_input": "",
         "ab_n_agents": 30,
+        "ab_enable_web_search": True,
         "price_product": "",
         "price_min": 19.99,
         "price_max": 59.99,
         "price_points": 5,
         "price_n_agents": 50,
+        "price_enable_web_search": True,
         "fg_product": "",
         "fg_participants": 6,
         "fg_rounds": 3,
+        "fg_enable_web_search": True,
     }
     current = {
         "product_description": (product_description or "").strip(),
@@ -368,14 +452,17 @@ def mark_dirty(
         "variant_a_input": (variant_a_input or "").strip(),
         "variant_b_input": (variant_b_input or "").strip(),
         "ab_n_agents": int(ab_n_agents),
+        "ab_enable_web_search": bool(ab_enable_web_search),
         "price_product": (price_product or "").strip(),
         "price_min": float(price_min),
         "price_max": float(price_max),
         "price_points": int(price_points),
         "price_n_agents": int(price_n_agents),
+        "price_enable_web_search": bool(price_enable_web_search),
         "fg_product": (fg_product or "").strip(),
         "fg_participants": int(fg_participants),
         "fg_rounds": int(fg_rounds),
+        "fg_enable_web_search": bool(fg_enable_web_search),
     }
     return any(current[key] != defaults[key] for key in defaults)
 
@@ -700,7 +787,7 @@ async def run_simulation_async(
     gender: Optional[str],
     income_level: Optional[str],
     location_type: Optional[str],
-    enable_web_search: bool = False,
+    enable_web_search: bool = True,
     temperature: float = 0.01,
     project_id: str | None = None,
     progress=gr.Progress(),
@@ -861,6 +948,7 @@ def run_simulation(*args):
 def generate_report(lang_code: str, only_cited_sources: bool):
     """Generate HTML report preview from last simulation results."""
     global _last_simulation_result, _last_product_description
+    global _last_report_analysis, _last_report_analysis_key
     lang = get_lang(lang_code)
     
     if _last_simulation_result is None:
@@ -870,12 +958,43 @@ def generate_report(lang_code: str, only_cited_sources: bool):
             return "", "❌ Brak wyników symulacji. Najpierw uruchom symulację."
     
     try:
+        analysis_sections = None
+        settings = get_settings()
+        model_name = getattr(settings, "report_analysis_model", "gemini-3-pro-preview")
+        analysis_key = f"{lang.value}:{_last_simulation_result.id}:{model_name}:v2"
+        if _last_report_analysis_key == analysis_key:
+            analysis_sections = _last_report_analysis
+            if analysis_sections:
+                narrative = (analysis_sections.get("narrative") or "").strip()
+                if narrative.startswith("Analiza niedostępna") or narrative.startswith("Analysis unavailable"):
+                    analysis_sections = None
+        if not analysis_sections:
+            try:
+                analysis_sections = asyncio.run(
+                    _generate_report_analysis_async(
+                        _last_simulation_result,
+                        _last_product_description,
+                        lang,
+                    )
+                )
+            except Exception as e:
+                analysis_sections = None
+                logging.getLogger(__name__).warning("Report analysis failed: %s", e)
+            if analysis_sections:
+                logging.getLogger(__name__).info("Report analysis status | narrative_len=%s | agent_len=%s | rec_len=%s",
+                                               len((analysis_sections.get("narrative") or "")),
+                                               len((analysis_sections.get("agent_summary") or "")),
+                                               len((analysis_sections.get("recommendations") or "")))
+                _last_report_analysis = analysis_sections
+                _last_report_analysis_key = analysis_key
+
         # Generate HTML report content
         html_content = generate_html_report(
             result=_last_simulation_result,
             product_description=_last_product_description,
             lang=lang,
             include_only_cited_sources=bool(only_cited_sources),
+            analysis_sections=analysis_sections,
         )
         
         # Store for export (raw HTML)
@@ -911,6 +1030,7 @@ _last_report_only_cited = None
 def export_report(lang_code: str, export_format: str, only_cited_sources: bool):
     """Export report to HTML or PDF file."""
     global _last_report_html, _last_report_only_cited
+    global _last_report_analysis, _last_report_analysis_key
     lang = get_lang(lang_code)
     
     if _last_simulation_result is None:
@@ -920,11 +1040,41 @@ def export_report(lang_code: str, export_format: str, only_cited_sources: bool):
             return None, "❌ Brak wyników symulacji. Najpierw uruchom symulację."
 
     if _last_report_html is None or _last_report_only_cited != bool(only_cited_sources):
+        analysis_sections = None
+        settings = get_settings()
+        model_name = getattr(settings, "report_analysis_model", "gemini-3-pro-preview")
+        analysis_key = f"{lang.value}:{_last_simulation_result.id}:{model_name}:v2"
+        if _last_report_analysis_key == analysis_key:
+            analysis_sections = _last_report_analysis
+            if analysis_sections:
+                narrative = (analysis_sections.get("narrative") or "").strip()
+                if narrative.startswith("Analiza niedostępna") or narrative.startswith("Analysis unavailable"):
+                    analysis_sections = None
+        if not analysis_sections:
+            try:
+                analysis_sections = asyncio.run(
+                    _generate_report_analysis_async(
+                        _last_simulation_result,
+                        _last_product_description,
+                        lang,
+                    )
+                )
+            except Exception as e:
+                analysis_sections = None
+                logging.getLogger(__name__).warning("Report analysis failed: %s", e)
+            if analysis_sections:
+                logging.getLogger(__name__).info("Report analysis status | narrative_len=%s | agent_len=%s | rec_len=%s",
+                                               len((analysis_sections.get("narrative") or "")),
+                                               len((analysis_sections.get("agent_summary") or "")),
+                                               len((analysis_sections.get("recommendations") or "")))
+                _last_report_analysis = analysis_sections
+                _last_report_analysis_key = analysis_key
         html_content = generate_html_report(
             result=_last_simulation_result,
             product_description=_last_product_description,
             lang=lang,
             include_only_cited_sources=bool(only_cited_sources),
+            analysis_sections=analysis_sections,
         )
         _last_report_html = html_content
         _last_report_only_cited = bool(only_cited_sources)
@@ -935,20 +1085,36 @@ def export_report(lang_code: str, export_format: str, only_cited_sources: bool):
         output_dir.mkdir(parents=True, exist_ok=True)
         
         if export_format == "PDF":
-            # Export as PDF using weasyprint if available, otherwise use pdfkit
+            # Export as PDF using Playwright if available, otherwise use weasyprint
             try:
-                from weasyprint import HTML
+                from playwright.sync_api import sync_playwright
                 output_path = output_dir / f"ssr_report_{timestamp}.pdf"
-                HTML(string=_last_report_html).write_pdf(str(output_path))
-            except ImportError:
-                # Fallback: save as HTML with PDF instruction
-                output_path = output_dir / f"ssr_report_{timestamp}.html"
-                with open(output_path, 'w', encoding='utf-8') as f:
-                    f.write(_last_report_html)
-                if lang == Language.EN:
-                    return str(output_path), "⚠️ PDF export requires weasyprint. Saved as HTML - use browser Print to PDF."
-                else:
-                    return str(output_path), "⚠️ Eksport PDF wymaga weasyprint. Zapisano HTML - użyj Drukuj do PDF w przeglądarce."
+                with sync_playwright() as p:
+                    browser = p.chromium.launch()
+                    page = browser.new_page(viewport={"width": 1200, "height": 1800})
+                    page.set_content(_last_report_html, wait_until="networkidle")
+                    page.emulate_media(media="screen")
+                    page.pdf(
+                        path=str(output_path),
+                        format="A4",
+                        print_background=True,
+                        margin={"top": "10mm", "right": "10mm", "bottom": "12mm", "left": "10mm"},
+                    )
+                    browser.close()
+            except Exception:
+                try:
+                    from weasyprint import HTML
+                    output_path = output_dir / f"ssr_report_{timestamp}.pdf"
+                    HTML(string=_last_report_html).write_pdf(str(output_path))
+                except ImportError:
+                    # Fallback: save as HTML with PDF instruction
+                    output_path = output_dir / f"ssr_report_{timestamp}.html"
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        f.write(_last_report_html)
+                    if lang == Language.EN:
+                        return str(output_path), "⚠️ PDF export requires Playwright or weasyprint. Saved as HTML - use browser Print to PDF."
+                    else:
+                        return str(output_path), "⚠️ Eksport PDF wymaga Playwright lub weasyprint. Zapisano HTML - użyj Drukuj do PDF w przeglądarce."
         else:
             # Export as HTML
             output_path = output_dir / f"ssr_report_{timestamp}.html"
@@ -974,6 +1140,7 @@ async def run_ab_test_async(
     variant_a: str,
     variant_b: str,
     n_agents: int,
+    enable_web_search: bool = True,
     progress=gr.Progress(),
 ):
     """Run A/B test comparison."""
@@ -992,6 +1159,7 @@ async def run_ab_test_async(
             variant_a=variant_a,
             variant_b=variant_b,
             n_agents=n_agents,
+            enable_web_search=enable_web_search,
         )
 
         progress(1.0)
@@ -1002,6 +1170,7 @@ async def run_ab_test_async(
             "variant_a": variant_a,
             "variant_b": variant_b,
             "n_agents": n_agents,
+            "enable_web_search": enable_web_search,
         }
 
         return build_ab_test_summary(result, lang), "✅", True
@@ -1031,6 +1200,7 @@ async def run_price_analysis_async(
     price_max: float,
     n_points: int,
     n_agents: int,
+    enable_web_search: bool = True,
     progress=gr.Progress(),
 ):
     """Run price sensitivity analysis."""
@@ -1052,6 +1222,7 @@ async def run_price_analysis_async(
             base_product_description=product_description,
             price_points=price_points,
             n_agents=n_agents,
+            enable_web_search=enable_web_search,
         )
 
         progress(1.0)
@@ -1064,6 +1235,7 @@ async def run_price_analysis_async(
             "price_max": price_max,
             "price_points": n_points,
             "n_agents": n_agents,
+            "enable_web_search": enable_web_search,
         }
 
         curve_text, chart_df = build_price_analysis_outputs(result, lang)
@@ -1093,6 +1265,7 @@ async def run_focus_group_async(
     product: str,
     n_participants: int,
     n_rounds: int,
+    enable_web_search: bool = True,
     project_id: str | None = None,
 ) -> tuple[str, str, str, object]:
     """Run virtual focus group discussion."""
@@ -1116,6 +1289,7 @@ async def run_focus_group_async(
             product_description=product.strip(),
             n_participants=int(n_participants),
             n_rounds=int(n_rounds),
+            enable_web_search=enable_web_search,
         )
         
         # Format discussion transcript
@@ -1150,6 +1324,7 @@ async def run_focus_group_async(
                 "product_description": product.strip(),
                 "n_participants": int(n_participants),
                 "n_rounds": int(n_rounds),
+                "enable_web_search": enable_web_search,
             },
             lang,
         )
@@ -1184,6 +1359,7 @@ def run_focus_group(*args):
         "product_description": _last_fg_product,
         "n_participants": args[2] if len(args) > 2 else None,
         "n_rounds": args[3] if len(args) > 3 else None,
+        "enable_web_search": args[4] if len(args) > 4 else True,
     }
     return result
 
@@ -1318,14 +1494,17 @@ def save_project(
     variant_a_input: str,
     variant_b_input: str,
     ab_n_agents: int,
+    ab_enable_web_search: bool,
     price_product: str,
     price_min: float,
     price_max: float,
     price_points: int,
     price_n_agents: int,
+    price_enable_web_search: bool,
     fg_product: str,
     fg_participants: int,
     fg_rounds: int,
+    fg_enable_web_search: bool,
 ):
     lang = get_lang(lang_code)
     store = get_project_store()
@@ -1434,6 +1613,7 @@ def save_project(
                 "variant_a": variant_a_input,
                 "variant_b": variant_b_input,
                 "n_agents": ab_n_agents,
+                "enable_web_search": ab_enable_web_search,
             }
         elif _last_ab_test_inputs is not None:
             ab_payload["inputs"] = _last_ab_test_inputs
@@ -1451,6 +1631,7 @@ def save_project(
                 "price_max": price_max,
                 "price_points": price_points,
                 "n_agents": price_n_agents,
+                "enable_web_search": price_enable_web_search,
             }
         elif _last_price_analysis_inputs is not None:
             price_payload["inputs"] = _last_price_analysis_inputs
@@ -1466,6 +1647,7 @@ def save_project(
                 "product_description": fg_product,
                 "n_participants": fg_participants,
                 "n_rounds": fg_rounds,
+                "enable_web_search": fg_enable_web_search,
             }
         elif _last_focus_group_inputs is not None:
             fg_payload["inputs"] = _last_focus_group_inputs
@@ -1515,7 +1697,7 @@ def load_project(
     logger = logging.getLogger(__name__)
     def _no_change_updates(count: int) -> list:
         return [gr.update() for _ in range(count)]
-    total_outputs = 45
+    total_outputs = 48
     status_index = 9
 
     def _confirm_message(message: str):
@@ -1538,7 +1720,7 @@ def load_project(
             msg,
             gr.update(visible=False),
             gr.update(visible=False),
-            *_no_change_updates(33),
+            *_no_change_updates(36),
         )
 
     if project_dirty and not allow_discard:
@@ -1570,7 +1752,7 @@ def load_project(
             msg,
             gr.update(visible=False),
             gr.update(visible=False),
-            *_no_change_updates(33),
+            *_no_change_updates(36),
         )
 
     try:
@@ -1668,13 +1850,14 @@ def load_project(
 
         n_agents_value = int(sim_inputs.get("n_agents") or 20)
         n_agents_value = max(5, min(100, n_agents_value))
-        enable_web_search_value = bool(sim_inputs.get("enable_web_search", False))
+        enable_web_search_value = bool(sim_inputs.get("enable_web_search", True))
         temperature_value = float(sim_inputs.get("temperature") or 0.01)
 
         variant_a_value = ab_inputs.get("variant_a") or product_value
         variant_b_value = ab_inputs.get("variant_b") or ""
         ab_n_agents_value = int(ab_inputs.get("n_agents") or 30)
         ab_n_agents_value = max(10, min(100, ab_n_agents_value))
+        ab_enable_web_search_value = bool(ab_inputs.get("enable_web_search", True))
 
         price_product_value = (
             price_inputs.get("base_product_description")
@@ -1686,12 +1869,14 @@ def load_project(
         price_points_value = max(3, min(7, price_points_value))
         price_n_agents_value = int(price_inputs.get("n_agents") or 20)
         price_n_agents_value = max(10, min(100, price_n_agents_value))
+        price_enable_web_search_value = bool(price_inputs.get("enable_web_search", True))
 
         fg_product_value = fg_inputs.get("product_description") or product_value
         fg_participants_value = int(fg_inputs.get("n_participants") or 6)
         fg_participants_value = max(4, min(8, fg_participants_value))
         fg_rounds_value = int(fg_inputs.get("n_rounds") or 3)
         fg_rounds_value = max(2, min(4, fg_rounds_value))
+        fg_enable_web_search_value = bool(fg_inputs.get("enable_web_search", True))
 
         extracted_full = sim_inputs.get("product_extracted_full") or project.get("product_extracted_full", "")
         extracted_preview = sim_inputs.get("product_extracted_preview") or _shorten_extracted(extracted_full, lang)
@@ -1738,14 +1923,17 @@ def load_project(
         gr.update(value=variant_a_value),
         gr.update(value=variant_b_value),
         gr.update(value=ab_n_agents_value),
+        gr.update(value=ab_enable_web_search_value),
         gr.update(value=price_product_value),
         gr.update(value=price_min_value),
         gr.update(value=price_max_value),
         gr.update(value=price_points_value),
         gr.update(value=price_n_agents_value),
+        gr.update(value=price_enable_web_search_value),
         gr.update(value=fg_product_value),
         gr.update(value=fg_participants_value),
         gr.update(value=fg_rounds_value),
+        gr.update(value=fg_enable_web_search_value),
         sim_summary,
         sim_chart,
         sim_opinions,
@@ -1778,7 +1966,7 @@ def maybe_autoload_project(
 ):
     """Auto-load project on selection if enabled."""
     if not auto_load:
-        return tuple(gr.update() for _ in range(45))
+        return tuple(gr.update() for _ in range(48))
     return load_project(lang_code, project_id, allow_discard, project_dirty)
 
 
@@ -1870,7 +2058,7 @@ def create_interface():
                         with gr.Accordion("🔍 Web Search (RAG)", open=False):
                             enable_web_search = gr.Checkbox(
                                 label="Enable Google Search / Włącz wyszukiwanie",
-                                value=False,
+                                value=True,
                                 info="Agents will search the web for market info / Agenci wyszukają informacje o rynku"
                             )
 
@@ -1957,13 +2145,19 @@ def create_interface():
                     )
 
                 ab_n_agents = gr.Slider(10, 100, value=30, step=10, label="Agents per variant / Agentów na wariant")
+                with gr.Accordion("🔍 Web Search (RAG)", open=False):
+                    ab_enable_web_search = gr.Checkbox(
+                        label="Enable Google Search / Włącz wyszukiwanie",
+                        value=True,
+                        info="Agents will search the web for market info / Agenci wyszukają informacje o rynku",
+                    )
                 ab_run_btn = gr.Button("🔬 Run A/B Test / Uruchom test", variant="primary")
                 ab_status = gr.Markdown("")
                 ab_result = gr.Markdown()
 
                 ab_run_btn.click(
                     fn=run_ab_test,
-                    inputs=[language_select, variant_a_input, variant_b_input, ab_n_agents],
+                    inputs=[language_select, variant_a_input, variant_b_input, ab_n_agents, ab_enable_web_search],
                     outputs=[ab_result, ab_status, project_dirty],
                 )
 
@@ -1983,6 +2177,12 @@ def create_interface():
                     price_points = gr.Slider(3, 7, value=5, step=1, label="Price points / Punkty cenowe")
 
                 price_n_agents = gr.Slider(10, 100, value=50, step=5, label="Agents per price / Agentów na cenę")
+                with gr.Accordion("🔍 Web Search (RAG)", open=False):
+                    price_enable_web_search = gr.Checkbox(
+                        label="Enable Google Search / Włącz wyszukiwanie",
+                        value=True,
+                        info="Agents will search the web for market info / Agenci wyszukają informacje o rynku",
+                    )
                 price_run_btn = gr.Button("💰 Analyze / Analizuj", variant="primary")
                 price_status = gr.Markdown("")
 
@@ -1997,7 +2197,15 @@ def create_interface():
 
                 price_run_btn.click(
                     fn=run_price_analysis,
-                    inputs=[language_select, price_product, price_min, price_max, price_points, price_n_agents],
+                    inputs=[
+                        language_select,
+                        price_product,
+                        price_min,
+                        price_max,
+                        price_points,
+                        price_n_agents,
+                        price_enable_web_search,
+                    ],
                     outputs=[price_result, price_chart, price_status, project_dirty],
                 )
 
@@ -2028,6 +2236,11 @@ def create_interface():
                             value=3,
                             step=1,
                         )
+                        fg_enable_web_search = gr.Checkbox(
+                            label="Enable Google Search / Włącz wyszukiwanie",
+                            value=True,
+                            info="Agents will search the web for market info / Agenci wyszukają informacje o rynku",
+                        )
                 
                 fg_status = gr.Markdown("*Ready / Gotowe*")
                 fg_run_btn = gr.Button("🎯 Start Focus Group / Rozpocznij dyskusję", variant="primary")
@@ -2048,7 +2261,14 @@ def create_interface():
                 
                 fg_run_btn.click(
                     fn=run_focus_group,
-                    inputs=[language_select, fg_product, fg_participants, fg_rounds, project_state],
+                    inputs=[
+                        language_select,
+                        fg_product,
+                        fg_participants,
+                        fg_rounds,
+                        fg_enable_web_search,
+                        project_state,
+                    ],
                     outputs=[fg_transcript, fg_summary, fg_status, project_dirty],
                 )
                 
@@ -2192,14 +2412,17 @@ def create_interface():
                         variant_a_input,
                         variant_b_input,
                         ab_n_agents,
+                        ab_enable_web_search,
                         price_product,
                         price_min,
                         price_max,
                         price_points,
                         price_n_agents,
+                        price_enable_web_search,
                         fg_product,
                         fg_participants,
                         fg_rounds,
+                        fg_enable_web_search,
                         summary_output,
                         chart_output,
                         opinions_output,
@@ -2234,14 +2457,17 @@ def create_interface():
                         variant_a_input,
                         variant_b_input,
                         ab_n_agents,
+                        ab_enable_web_search,
                         price_product,
                         price_min,
                         price_max,
                         price_points,
                         price_n_agents,
+                        price_enable_web_search,
                         fg_product,
                         fg_participants,
                         fg_rounds,
+                        fg_enable_web_search,
                     ],
                     outputs=[save_project_status, project_select, project_state, project_dirty],
                 )
@@ -2283,14 +2509,17 @@ def create_interface():
                         variant_a_input,
                         variant_b_input,
                         ab_n_agents,
+                        ab_enable_web_search,
                         price_product,
                         price_min,
                         price_max,
                         price_points,
                         price_n_agents,
+                        price_enable_web_search,
                         fg_product,
                         fg_participants,
                         fg_rounds,
+                        fg_enable_web_search,
                         summary_output,
                         chart_output,
                         opinions_output,
@@ -2325,14 +2554,17 @@ def create_interface():
                         variant_a_input,
                         variant_b_input,
                         ab_n_agents,
+                        ab_enable_web_search,
                         price_product,
                         price_min,
                         price_max,
                         price_points,
                         price_n_agents,
+                        price_enable_web_search,
                         fg_product,
                         fg_participants,
                         fg_rounds,
+                        fg_enable_web_search,
                     ],
                     outputs=[save_project_status, project_select, project_state, project_dirty],
                 ).then(
@@ -2366,14 +2598,17 @@ def create_interface():
                         variant_a_input,
                         variant_b_input,
                         ab_n_agents,
+                        ab_enable_web_search,
                         price_product,
                         price_min,
                         price_max,
                         price_points,
                         price_n_agents,
+                        price_enable_web_search,
                         fg_product,
                         fg_participants,
                         fg_rounds,
+                        fg_enable_web_search,
                         summary_output,
                         chart_output,
                         opinions_output,
@@ -2421,14 +2656,17 @@ def create_interface():
                         variant_a_input,
                         variant_b_input,
                         ab_n_agents,
+                        ab_enable_web_search,
                         price_product,
                         price_min,
                         price_max,
                         price_points,
                         price_n_agents,
+                        price_enable_web_search,
                         fg_product,
                         fg_participants,
                         fg_rounds,
+                        fg_enable_web_search,
                         summary_output,
                         chart_output,
                         opinions_output,
@@ -2515,14 +2753,17 @@ def create_interface():
             variant_a_input,
             variant_b_input,
             ab_n_agents,
+            ab_enable_web_search,
             price_product,
             price_min,
             price_max,
             price_points,
             price_n_agents,
+            price_enable_web_search,
             fg_product,
             fg_participants,
             fg_rounds,
+            fg_enable_web_search,
         ]
         mark_dirty_inputs = dirty_inputs + [suppress_dirty]
         for comp in dirty_inputs:
@@ -2535,7 +2776,7 @@ def create_interface():
         gr.Markdown(
             """
             ---
-            *Market Wizard v0.2.0 | Based on arXiv:2510.08338 | PL/EN*
+            *Market Wizard v0.3.0 | Based on arXiv:2510.08338 | PL/EN*
             """
         )
 

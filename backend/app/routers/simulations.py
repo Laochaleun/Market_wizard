@@ -31,6 +31,7 @@ class ABTestRequest(BaseModel):
     variant_b_description: str = Field(..., min_length=10)
     target_audience: Optional[DemographicProfile] = None
     n_agents: int = Field(50, ge=1, le=500)
+    enable_web_search: bool = False
 
 
 class PriceSensitivityRequest(BaseModel):
@@ -40,6 +41,7 @@ class PriceSensitivityRequest(BaseModel):
     price_points: list[float] = Field(..., min_length=2, max_length=10)
     target_audience: Optional[DemographicProfile] = None
     n_agents: int = Field(30, ge=1, le=200)
+    enable_web_search: bool = False
 
 
 # === Endpoints ===
@@ -85,6 +87,7 @@ async def run_ab_test(request: ABTestRequest):
             variant_b=request.variant_b_description,
             target_audience=request.target_audience,
             n_agents=request.n_agents,
+            enable_web_search=request.enable_web_search,
         )
         return result
     except Exception as e:
@@ -107,6 +110,7 @@ async def analyze_price_sensitivity(request: PriceSensitivityRequest):
             price_points=request.price_points,
             target_audience=request.target_audience,
             n_agents=request.n_agents,
+            enable_web_search=request.enable_web_search,
         )
         return result
     except Exception as e:

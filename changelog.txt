@@ -1,0 +1,12 @@
+v0.3.0 (2026-01-30)
+- Added narrative analysis sections to reports (narrative, agent response summary, sales/marketing recommendations).
+- Report analysis now uses Gemini 3 Pro Preview with explicit thinking budget configuration.
+- PDF export uses browser rendering (Playwright) for closer HTML parity (fallback to WeasyPrint).
+- Web search defaults enabled for simulations, A/B, price analysis, and focus group; sources reused in price analysis.
+- Focus group optionally injects market context from cached/search sources.
+- Report HTML print layout improvements (avoid page breaks in charts).
+- Added report analysis debugging logs.
+- Bug fixes for report analysis caching and export regeneration.
+
+Known issue:
+- Gemini 3 Pro Preview sometimes returns empty text in API unless thinking_budget is set; analysis can still fail on some runs.

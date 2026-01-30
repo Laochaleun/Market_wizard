@@ -151,6 +151,7 @@ def generate_html_report(
     product_description: str,
     lang: Language = Language.PL,
     include_only_cited_sources: bool = False,
+    analysis_sections: dict[str, str] | None = None,
 ) -> str:
     """Generate comprehensive HTML report."""
     
@@ -194,6 +195,7 @@ def generate_html_report(
             sources,
             total_sources_count,
             include_only_cited_sources,
+            analysis_sections,
         )
     else:
         html = _generate_html_en(
@@ -207,6 +209,7 @@ def generate_html_report(
             sources,
             total_sources_count,
             include_only_cited_sources,
+            analysis_sections,
         )
     
     return html
@@ -223,6 +226,7 @@ def _generate_html_pl(
     sources,
     total_sources_count,
     only_cited,
+    analysis_sections,
 ):
     """Generate Polish HTML report."""
     
@@ -250,7 +254,9 @@ def _generate_html_pl(
         """
     
     dist = result.aggregate_distribution
-    
+
+    analysis_html = _generate_analysis_sections_pl(analysis_sections)
+
     return f"""<!DOCTYPE html>
 <html lang="pl">
 <head>
@@ -316,6 +322,8 @@ def _generate_html_pl(
         .stat-label {{ color: #000000 !important; font-size: 0.875rem; font-weight: 600; }}
         .chart-container {{ text-align: center; margin: 1rem 0; }}
         .chart-container img {{ max-width: 100%; height: auto; border-radius: 0.5rem; }}
+        .avoid-break {{ break-inside: avoid; page-break-inside: avoid; }}
+        .avoid-break {{ break-inside: avoid; page-break-inside: avoid; }}
         .distribution-bar {{
             display: flex;
             height: 2rem;
@@ -377,6 +385,10 @@ def _generate_html_pl(
         @media print {{
             .container {{ max-width: 100%; padding: 1rem; }}
             .response-card {{ page-break-inside: avoid; }}
+            body {{
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }}
         }}
     </style>
 </head>
@@ -419,7 +431,7 @@ def _generate_html_pl(
             </div>
         </div>
         
-        <div style="background: #ffffff; border-radius: 1rem; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+        <div class="avoid-break" style="background: #ffffff; border-radius: 1rem; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
             <h2 style="color: #000000; font-size: 1.25rem; margin-bottom: 1rem; border-bottom: 2px solid #1e3a5f; padding-bottom: 0.5rem;">📈 Rozkład intencji zakupu</h2>
             <div style="display: flex; height: 2rem; border-radius: 0.5rem; overflow: hidden; margin: 1rem 0;">
                 <div style="width: {dist.scale_1*100}%; background: #1e3a5f; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 0.75rem;">1</div>
@@ -428,12 +440,12 @@ def _generate_html_pl(
                 <div style="width: {dist.scale_4*100}%; background: #6b9db8; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 0.75rem;">4</div>
                 <div style="width: {dist.scale_5*100}%; background: #8ebfd4; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 0.75rem;">5</div>
             </div>
-            <div style="text-align: center; margin: 1rem 0;">
+            <div class="chart-container avoid-break">
                 <img src="data:image/png;base64,{dist_chart}" alt="Distribution Chart" style="max-width: 100%; height: auto; border-radius: 0.5rem;">
             </div>
         </div>
         
-        <div style="background: #ffffff; border-radius: 1rem; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+        <div class="avoid-break" style="background: #ffffff; border-radius: 1rem; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
             <h2 style="color: #000000; font-size: 1.25rem; margin-bottom: 1rem; border-bottom: 2px solid #1e3a5f; padding-bottom: 0.5rem;">👥 Profil demograficzny respondentów</h2>
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
                 <div style="text-align: center; padding: 1.5rem; background: #ffffff; border: 2px solid #1e3a5f; border-radius: 0.75rem;">
@@ -449,17 +461,19 @@ def _generate_html_pl(
                     <div style="color: #000000; font-size: 0.875rem; font-weight: 600;">Rozkład płci</div>
                 </div>
             </div>
-            <div style="text-align: center; margin: 1rem 0;">
+            <div class="chart-container avoid-break">
                 <img src="data:image/png;base64,{age_chart}" alt="Age Distribution" style="max-width: 100%; height: auto; border-radius: 0.5rem;">
             </div>
         </div>
         
-        <div style="background: #ffffff; border-radius: 1rem; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+        <div class="avoid-break" style="background: #ffffff; border-radius: 1rem; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
             <h2 style="color: #000000; font-size: 1.25rem; margin-bottom: 1rem; border-bottom: 2px solid #1e3a5f; padding-bottom: 0.5rem;">💰 Dochód vs Intencja zakupu</h2>
-            <div style="text-align: center; margin: 1rem 0;">
+            <div class="chart-container avoid-break">
                 <img src="data:image/png;base64,{income_chart}" alt="Income vs Intent" style="max-width: 100%; height: auto; border-radius: 0.5rem;">
             </div>
         </div>
+
+        {analysis_html}
         
         <div style="background: #ffffff; border-radius: 1rem; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
             <h2 style="color: #000000; font-size: 1.25rem; margin-bottom: 1rem; border-bottom: 2px solid #1e3a5f; padding-bottom: 0.5rem;">📝 Wszystkie odpowiedzi ({len(responses)} respondentów)</h2>
@@ -521,6 +535,33 @@ def _generate_sources_section_pl(
         </p>
         {sources_html}
     </div>'''
+
+
+def _generate_analysis_sections_pl(analysis_sections: dict[str, str] | None) -> str:
+    if not analysis_sections:
+        return ""
+
+    narrative = _format_response_html(analysis_sections.get("narrative", ""))
+    agent_summary = _format_response_html(analysis_sections.get("agent_summary", ""))
+    recommendations = _format_response_html(analysis_sections.get("recommendations", ""))
+
+    if not any([narrative, agent_summary, recommendations]):
+        return ""
+
+    return f'''
+        <div style="background: #ffffff; border-radius: 1rem; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+            <h2 style="color: #000000; font-size: 1.25rem; margin-bottom: 1rem; border-bottom: 2px solid #1e3a5f; padding-bottom: 0.5rem;">🧠 Analiza narracyjna</h2>
+            <div style="background: #f8fafc; padding: 1rem; border-radius: 0.5rem; border-left: 3px solid #1e3a5f; color: #000000;">{narrative}</div>
+        </div>
+        <div style="background: #ffffff; border-radius: 1rem; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+            <h2 style="color: #000000; font-size: 1.25rem; margin-bottom: 1rem; border-bottom: 2px solid #1e3a5f; padding-bottom: 0.5rem;">🗣️ Podsumowanie odpowiedzi agentów</h2>
+            <div style="background: #f8fafc; padding: 1rem; border-radius: 0.5rem; border-left: 3px solid #1e3a5f; color: #000000;">{agent_summary}</div>
+        </div>
+        <div style="background: #ffffff; border-radius: 1rem; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+            <h2 style="color: #000000; font-size: 1.25rem; margin-bottom: 1rem; border-bottom: 2px solid #1e3a5f; padding-bottom: 0.5rem;">📣 Rekomendacje sprzedażowo-marketingowe</h2>
+            <div style="background: #f8fafc; padding: 1rem; border-radius: 0.5rem; border-left: 3px solid #1e3a5f; color: #000000;">{recommendations}</div>
+        </div>
+    '''
 
 
 def _select_report_sources(result: SimulationResult, only_cited: bool) -> list[str]:
@@ -600,6 +641,33 @@ def _format_response_html(text: str) -> str:
     return "".join(out)
 
 
+def _generate_analysis_sections_en(analysis_sections: dict[str, str] | None) -> str:
+    if not analysis_sections:
+        return ""
+
+    narrative = _format_response_html(analysis_sections.get("narrative", ""))
+    agent_summary = _format_response_html(analysis_sections.get("agent_summary", ""))
+    recommendations = _format_response_html(analysis_sections.get("recommendations", ""))
+
+    if not any([narrative, agent_summary, recommendations]):
+        return ""
+
+    return f'''
+        <div class="card">
+            <h2>🧠 Narrative Analysis</h2>
+            <div style="background: #f8fafc; padding: 1rem; border-radius: 0.5rem; border-left: 3px solid #1e3a5f; color: #000000;">{narrative}</div>
+        </div>
+        <div class="card">
+            <h2>🗣️ Agent Response Summary</h2>
+            <div style="background: #f8fafc; padding: 1rem; border-radius: 0.5rem; border-left: 3px solid #1e3a5f; color: #000000;">{agent_summary}</div>
+        </div>
+        <div class="card">
+            <h2>📣 Sales & Marketing Recommendations</h2>
+            <div style="background: #f8fafc; padding: 1rem; border-radius: 0.5rem; border-left: 3px solid #1e3a5f; color: #000000;">{recommendations}</div>
+        </div>
+    '''
+
+
 def _generate_html_en(
     result,
     product,
@@ -611,6 +679,7 @@ def _generate_html_en(
     sources,
     total_sources_count,
     only_cited,
+    analysis_sections,
 ):
     """Generate English HTML report."""
     
@@ -638,7 +707,9 @@ def _generate_html_en(
         """
     
     dist = result.aggregate_distribution
-    
+
+    analysis_html = _generate_analysis_sections_en(analysis_sections)
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -757,6 +828,10 @@ def _generate_html_en(
         @media print {{
             .container {{ max-width: 100%; padding: 1rem; }}
             .response-card {{ page-break-inside: avoid; }}
+            body {{
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }}
         }}
     </style>
 </head>
@@ -799,14 +874,14 @@ def _generate_html_en(
             </div>
         </div>
         
-        <div class="card">
+        <div class="card avoid-break">
             <h2>📈 Purchase Intent Distribution</h2>
             <div class="chart-container">
                 <img src="data:image/png;base64,{dist_chart}" alt="Distribution Chart">
             </div>
         </div>
         
-        <div class="card">
+        <div class="card avoid-break">
             <h2>👥 Respondent Demographics</h2>
             <div class="stats-grid">
                 <div class="stat-item">
@@ -822,17 +897,19 @@ def _generate_html_en(
                     <div class="stat-label">Gender Split</div>
                 </div>
             </div>
-            <div class="chart-container">
+            <div class="chart-container avoid-break">
                 <img src="data:image/png;base64,{age_chart}" alt="Age Distribution">
             </div>
         </div>
         
-        <div class="card">
+        <div class="card avoid-break">
             <h2>💰 Income vs Purchase Intent</h2>
-            <div class="chart-container">
+            <div class="chart-container avoid-break">
                 <img src="data:image/png;base64,{income_chart}" alt="Income vs Intent">
             </div>
         </div>
+
+        {analysis_html}
         
         <div class="card">
             <h2>📝 All Responses ({len(responses)} respondents)</h2>

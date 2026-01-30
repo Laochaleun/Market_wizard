@@ -61,6 +61,7 @@ class FocusGroupEngine:
         self.llm_client = llm_client or get_llm_client()
         self.persona_manager = persona_manager or PersonaManager(language=language)
         self.language = language
+        self._market_context: str = ""
         
     async def run_focus_group(
         self,
@@ -68,6 +69,7 @@ class FocusGroupEngine:
         n_participants: int = 6,
         n_rounds: int = 3,
         target_audience: DemographicProfile | None = None,
+        enable_web_search: bool = False,
     ) -> FocusGroupResult:
         """
         Run a complete focus group session.
@@ -85,6 +87,28 @@ class FocusGroupEngine:
         n_participants = max(4, min(8, n_participants))
         n_rounds = max(2, min(4, n_rounds))
         
+        # Optional market context from web search
+        self._market_context = ""
+        if enable_web_search and hasattr(self.llm_client, "generate_market_sources"):
+            try:
+                sources = []
+                if hasattr(self.llm_client, "get_cached_market_sources"):
+                    sources = (
+                        self.llm_client.get_cached_market_sources(
+                            product_description,
+                            self.language,
+                        )
+                        or []
+                    )
+                if not sources:
+                    sources = await self.llm_client.generate_market_sources(
+                        product_description,
+                        language=self.language,
+                    )
+                self._market_context = self._build_market_context(sources)
+            except Exception:
+                self._market_context = ""
+
         # Generate diverse personas
         personas = self.persona_manager.generate_population(
             n_agents=n_participants,
@@ -141,6 +165,7 @@ class FocusGroupEngine:
         product: str,
     ) -> FocusGroupMessage:
         """Generate initial impression for round 1."""
+        context_block = self._market_context_block()
         if self.language == Language.PL:
             prompt = f"""Jesteś {persona.name}, uczestnikiem grupy fokusowej.
 Masz {persona.age} lat, mieszkasz w {persona.location}, zarabiasz {persona.income:,} PLN miesięcznie.
@@ -148,6 +173,7 @@ Masz {persona.age} lat, mieszkasz w {persona.location}, zarabiasz {persona.incom
 
 Moderator przedstawił produkt do oceny:
 "{product}"
+{context_block}
 
 Podziel się swoimi pierwszymi wrażeniami (2-3 zdania). Mów naturalnie, jak w prawdziwej dyskusji.
 Odpowiedz TYLKO swoją wypowiedzią, bez żadnych wstępów."""
@@ -158,6 +184,7 @@ You are {persona.age} years old, living in {persona.location}, earning ${persona
 
 The moderator presented this product for evaluation:
 "{product}"
+{context_block}
 
 Share your first impressions (2-3 sentences). Speak naturally, as in a real discussion.
 Reply ONLY with your statement, no introductions."""
@@ -206,12 +233,14 @@ Reply ONLY with your statement, no introductions."""
             for m in previous_messages
             if m.persona_name != persona.name
         ])
+        context_block = self._market_context_block()
         
         if self.language == Language.PL:
             prompt = f"""Jesteś {persona.name}, uczestnikiem grupy fokusowej.
 Masz {persona.age} lat, mieszkasz w {persona.location}, zarabiasz {persona.income:,} PLN miesięcznie.
 
 Dyskutujecie o produkcie: "{product}"
+{context_block}
 
 Inni uczestnicy właśnie powiedzieli:
 {prev_opinions}
@@ -291,6 +320,7 @@ Be natural and authentic. Reply ONLY with your statement."""
             prompt = f"""Jesteś moderatorem grupy fokusowej. Przeanalizuj poniższą dyskusję o produkcie.
 
 PRODUKT: {product}
+{self._market_context_block(header_only=True)}
 
 UCZESTNICY: {', '.join([p.name for p in participants])}
 
@@ -319,6 +349,7 @@ REKOMENDACJE DLA PRODUCENTA:
             prompt = f"""You are a focus group moderator. Analyze the following product discussion.
 
 PRODUCT: {product}
+{self._market_context_block(header_only=True)}
 
 PARTICIPANTS: {', '.join([p.name for p in participants])}
 
@@ -398,3 +429,31 @@ RECOMMENDATIONS FOR PRODUCER:
                     disagreement.append(item)
         
         return summary_text, insights, consensus, disagreement
+
+    def _build_market_context(self, sources: List[dict]) -> str:
+        if not sources:
+            return ""
+        items = []
+        for source in sources:
+            summary = (source.get("summary") or "").strip()
+            url = (source.get("url") or "").strip()
+            if not summary:
+                continue
+            if url:
+                items.append(f"- {summary} ({url})")
+            else:
+                items.append(f"- {summary}")
+            if len(items) >= 4:
+                break
+        return "\n".join(items).strip()
+
+    def _market_context_block(self, header_only: bool = False) -> str:
+        if not self._market_context:
+            return ""
+        if self.language == Language.PL:
+            header = "KONTEKST RYNKOWY (skrot z sieci):"
+        else:
+            header = "MARKET CONTEXT (web summary):"
+        if header_only:
+            return f"{header}\n{self._market_context}\n"
+        return f"\n{header}\n{self._market_context}\n"

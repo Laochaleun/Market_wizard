@@ -99,6 +99,7 @@ class SimulationEngine:
         concurrency_limit: int = 10,
         enable_web_search: bool = False,
         personas: List[Persona] | None = None,
+        global_sources: list[dict[str, str]] | None = None,
     ) -> SimulationResult:
         """
         Run a complete simulation.
@@ -126,20 +127,21 @@ class SimulationEngine:
         # Step 2: Generate opinions with concurrency control
         opinions: List[tuple[Persona, str, list[str]]] = []
         semaphore = asyncio.Semaphore(concurrency_limit)
-        global_sources: list[dict[str, str]] = []
+        global_sources_list: list[dict[str, str]] = list(global_sources or [])
 
         if enable_web_search and hasattr(self.llm_client, "generate_market_sources"):
-            try:
-                global_sources = await self.llm_client.generate_market_sources(
-                    product_description,
-                    language=self.language,
-                )
-            except Exception as e:
-                print(f"⚠️ Market sources error: {e}")
-                global_sources = []
+            if not global_sources_list:
+                try:
+                    global_sources_list = await self.llm_client.generate_market_sources(
+                        product_description,
+                        language=self.language,
+                    )
+                except Exception as e:
+                    print(f"⚠️ Market sources error: {e}")
+                    global_sources_list = []
         if enable_web_search:
-            self._logger.info("Web search enabled | global_sources=%s", len(global_sources))
-            if not global_sources:
+            self._logger.info("Web search enabled | global_sources=%s", len(global_sources_list))
+            if not global_sources_list:
                 self._logger.warning(
                     "Web search enabled but no sources returned; proceeding without sources."
                 )
@@ -150,7 +152,7 @@ class SimulationEngine:
                     persona,
                     product_description,
                     enable_web_search,
-                    global_sources,
+                    global_sources_list,
                 )
 
         tasks = [generate_with_limit(p) for p in personas]
@@ -158,7 +160,7 @@ class SimulationEngine:
 
         # Filter out failed generations (exceptions)
         valid_opinions: List[tuple[Persona, str, list[str]]] = []
-        all_sources: List[str] = [s.get("url") for s in global_sources if s.get("url")]
+        all_sources: List[str] = [s.get("url") for s in global_sources_list if s.get("url")]
         for result in opinions:
             if isinstance(result, Exception):
                 # Log error but continue
@@ -229,6 +231,7 @@ class ABTestEngine:
         variant_b: str,  # Product description B
         target_audience: DemographicProfile | None = None,
         n_agents: int = 100,
+        enable_web_search: bool = False,
     ) -> dict:
         """
         Run A/B test comparing two product variants.
@@ -251,12 +254,14 @@ class ABTestEngine:
                 product_description=variant_a,
                 n_agents=n_agents,
                 personas=personas,
+                enable_web_search=enable_web_search,
             ),
             self.simulation_engine.run_simulation(
                 project_id=project_id,
                 product_description=variant_b,
                 n_agents=n_agents,
                 personas=personas,
+                enable_web_search=enable_web_search,
             ),
         )
 
@@ -311,6 +316,7 @@ class PriceSensitivityEngine:
         price_points: List[float],  # e.g., [19.99, 29.99, 39.99, 49.99, 59.99]
         target_audience: DemographicProfile | None = None,
         n_agents: int = 50,
+        enable_web_search: bool = False,
     ) -> dict:
         """
         Analyze purchase intent at different price points.
@@ -348,6 +354,16 @@ class PriceSensitivityEngine:
             random.setstate(rand_state)
             np.random.set_state(np_state)
 
+        global_sources: list[dict[str, str]] = []
+        if enable_web_search and hasattr(self.simulation_engine.llm_client, "generate_market_sources"):
+            try:
+                global_sources = await self.simulation_engine.llm_client.generate_market_sources(
+                    base_product_description,
+                    language=self.simulation_engine.language,
+                )
+            except Exception:
+                global_sources = []
+
         for price in price_points:
             # Inject price into product description
             product_with_price = f"{base_product_description}\n\nCena: {price:.2f} PLN"
@@ -358,6 +374,8 @@ class PriceSensitivityEngine:
                 target_audience=target_audience,
                 n_agents=n_agents,
                 personas=personas,
+                enable_web_search=enable_web_search,
+                global_sources=global_sources or None,
             )
 
             results[price] = {

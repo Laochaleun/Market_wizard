@@ -137,3 +137,29 @@ PY
 - Added JSON-LD structured field extraction to prefer product price when available.
 - Added multilingual shipping fee filtering (prompt + post-process) to avoid treating shipping cost as product price.
 - Added product-like URL prioritization and top-5 URL logging; listing/guide sources remain as backup.
+
+## Next Session Request (Report Analysis Expansion)
+- Add a detailed narrative analysis section in the report placed after data/charts/diagrams and before agent responses.
+- This section should interpret results for readers who prefer text: key insights, trends, anomalies, and implications.
+- Add a separate summary of agent responses: key observations, trends, surprises, conclusions.
+- Add a final section with sales & marketing recommendations: target audience, positioning, channels, campaigns, social media.
+- Use model: `gemini-3-pro-preview` for this analysis (serious, high‑quality output).
+- Consider Gemini “computer use” capability for this in a future iteration (see: https://ai.google.dev/gemini-api/docs/computer-use?hl=pl).
+- Implement in next session (clean context).
+
+
+## 2026-01-30 Updates (v0.3.0)
+- Added narrative analysis sections to reports (narrative, agent summary, recommendations).
+- Report analysis uses gemini-3-pro-preview with thinking_budget=256 and include_thoughts=False.
+- PDF export prefers Playwright (browser rendering) with WeasyPrint fallback.
+- Web search default enabled across Simulation, A/B, Price Analysis, Focus Group.
+- Price analysis now reuses a single set of market sources for all price points.
+- Focus group injects market context from cached/search sources.
+- Report print layout avoids page breaks within chart sections.
+- Added report analysis logging and cache invalidation by model.
+
+## Open Issue: Report Analysis Empty Output
+- Current problem: analysis sections show "Analiza niedostępna..." despite gemini-3-pro-preview working in AI Studio UI.
+- API returns empty content unless thinking_budget is set; we set thinking_budget=256, but analysis still fails in app.
+- Add debugging in next session: confirm response.text length and content from gemini-3-pro-preview in live run.
+- Next session start: try higher thinking_budget (e.g., 512/1024) and/or explicitly set include_thoughts=False, and verify logs from report generation.

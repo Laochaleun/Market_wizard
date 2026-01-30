@@ -238,6 +238,48 @@ How likely are you to purchase this product? Answer naturally, as you would in a
 
 
 # =============================================================================
+# REPORT ANALYSIS PROMPTS
+# =============================================================================
+
+def get_report_analysis_prompt(language: Language, payload_json: str) -> str:
+    """Build prompt for narrative report analysis from simulation data."""
+    if language == Language.PL:
+        return (
+            "Jesteś analitykiem rynku. Na podstawie danych z symulacji SSR przygotuj "
+            "trzy sekcje analizy. Zwróć WYŁĄCZNIE JSON o schemacie:\n"
+            '{"narrative":"","agent_summary":"","recommendations":""}\n'
+            "Zasady:\n"
+            "- Pisz po polsku.\n"
+            "- Nie wymyślaj faktów; opieraj się wyłącznie na danych wejściowych.\n"
+            "- narrative: 2-4 krótkie akapity + opcjonalna lista punktów; uwzględnij kluczowe "
+            "wnioski, trendy, anomalie i implikacje.\n"
+            "- agent_summary: 4-6 punktów z obserwacjami z odpowiedzi agentów, trendami, "
+            "zaskoczeniami i wnioskami.\n"
+            "- recommendations: konkretne rekomendacje sprzedażowo-marketingowe: segmenty "
+            "docelowe, pozycjonowanie, kanały, kampanie, social media.\n"
+            "- Nie dodawaj nagłówków ani markdown w kluczach JSON, ale możesz użyć punktów "
+            "(' - ' lub '* ') w wartościach.\n\n"
+            f"DANE:\n{payload_json}"
+        )
+
+    return (
+        "You are a market analyst. Using the SSR simulation data, produce three analysis sections. "
+        "Return ONLY JSON with schema:\n"
+        '{"narrative":"","agent_summary":"","recommendations":""}\n'
+        "Rules:\n"
+        "- Write in English.\n"
+        "- Do not invent facts; rely only on the input data.\n"
+        "- narrative: 2-4 short paragraphs + optional bullet list; cover key insights, trends, "
+        "anomalies, and implications.\n"
+        "- agent_summary: 4-6 bullets with observations from agent responses, trends, surprises, "
+        "and conclusions.\n"
+        "- recommendations: concrete sales & marketing recommendations: target segments, "
+        "positioning, channels, campaigns, social media.\n"
+        "- Do not add headings or markdown keys; you may use bullet points (' - ' or '* ') in values.\n\n"
+        f"DATA:\n{payload_json}"
+    )
+
+# =============================================================================
 # UI LABELS
 # =============================================================================
 
