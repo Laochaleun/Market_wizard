@@ -532,6 +532,31 @@ def _extract_from_html(html: str, url: str, language: str) -> str:
     return base_desc.strip()
 
 
+def _extract_structured_from_html(html: str) -> dict[str, str]:
+    html = html or ""
+    blocks = _extract_json_ld(html)
+    product = _find_product_ld(blocks)
+    name = brand = price = currency = ""
+    if product:
+        name = _clean_text(product.get("name") or "")
+        brand_val = product.get("brand")
+        if isinstance(brand_val, dict):
+            brand = _clean_text(brand_val.get("name") or "")
+        elif isinstance(brand_val, str):
+            brand = _clean_text(brand_val)
+        price_val, currency_val = _extract_price_from_ld(product)
+        if price_val:
+            price = _clean_text(price_val)
+        if currency_val:
+            currency = _clean_text(currency_val)
+    return {
+        "name": name,
+        "brand": brand,
+        "price": price,
+        "currency": currency,
+    }
+
+
 def _extract_main_text(html: str) -> str:
     html = html or ""
     soup = BeautifulSoup(html, "lxml")
@@ -711,6 +736,28 @@ async def extract_product_text_fast(url: str) -> str:
     return ""
 
 
+async def extract_product_text_and_structured_fast(url: str) -> tuple[str, dict[str, str]]:
+    """Fast extractor: HTTP only, returns main page text + JSON-LD fields."""
+    if _is_grounding_redirect(url):
+        logger.info("Product text fast: Skip grounding redirect: %s", url)
+        return "", {"name": "", "brand": "", "price": "", "currency": ""}
+    try:
+        html = await _fetch_html_httpx(url)
+    except Exception:
+        logger.info("Product text fast: HTTP fetch failed: %s", url)
+        return "", {"name": "", "brand": "", "price": "", "currency": ""}
+    if not html:
+        logger.info("Product text fast: HTTP fetch failed: %s", url)
+        return "", {"name": "", "brand": "", "price": "", "currency": ""}
+    text = _extract_main_text(html)
+    structured = _extract_structured_from_html(html)
+    if text:
+        logger.info("Product text fast: HTTP extract OK: %s", url)
+    else:
+        logger.info("Product text fast: No content extracted: %s", url)
+    return text, structured
+
+
 async def extract_product_summary_with_playwright(
     url: str,
     language: str,
@@ -760,3 +807,28 @@ async def extract_product_text_with_playwright(
         return text
     logger.info("Product text fallback: No content extracted: %s", url)
     return ""
+
+
+async def extract_product_text_and_structured_with_playwright(
+    url: str,
+    timeout_ms: int = 15000,
+) -> tuple[str, dict[str, str]]:
+    """Fallback extractor: Playwright only, returns main page text + JSON-LD fields."""
+    if _is_grounding_redirect(url):
+        logger.info("Product text fallback: Skip grounding redirect: %s", url)
+        return "", {"name": "", "brand": "", "price": "", "currency": ""}
+    try:
+        html = await _fetch_html_playwright(url, timeout_ms=timeout_ms)
+    except Exception:
+        logger.info("Product text fallback: Playwright fetch failed: %s", url)
+        return "", {"name": "", "brand": "", "price": "", "currency": ""}
+    if not html:
+        logger.info("Product text fallback: Playwright fetch failed: %s", url)
+        return "", {"name": "", "brand": "", "price": "", "currency": ""}
+    text = _extract_main_text(html)
+    structured = _extract_structured_from_html(html)
+    if text:
+        logger.info("Product text fallback: Playwright extract OK: %s", url)
+    else:
+        logger.info("Product text fallback: No content extracted: %s", url)
+    return text, structured

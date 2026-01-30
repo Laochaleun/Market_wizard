@@ -408,6 +408,9 @@ class GeminiClient:
                 metadata = getattr(response, "grounding_metadata", None) or getattr(response, "groundingMetadata", None)
             if metadata:
                 sources = self._extract_grounding_urls(metadata)
+                self._logger.info("Market sources grounding: extracted %s urls", len(sources))
+            else:
+                self._logger.info("Market sources grounding: no metadata")
             return sources
 
         prompt_timeout_s = 18.0
@@ -468,8 +471,8 @@ class GeminiClient:
         from app.services.product_extractor import (
             extract_product_summary_fast,
             extract_product_summary_with_playwright,
-            extract_product_text_fast,
-            extract_product_text_with_playwright,
+            extract_product_text_and_structured_fast,
+            extract_product_text_and_structured_with_playwright,
         )
 
         semaphore = asyncio.Semaphore(5)
@@ -483,19 +486,19 @@ class GeminiClient:
         async def build_record(url: str) -> dict[str, str] | None:
             nonlocal fallback_used
             async with semaphore:
-                text = await extract_product_text_fast(url)
-                if not text:
+                text, structured = await extract_product_text_and_structured_fast(url)
+                if not text and not any(structured.values()):
                     async with fallback_lock:
                         if fallback_used >= fallback_limit:
                             return None
                         fallback_used += 1
-                    text = await extract_product_text_with_playwright(
+                    text, structured = await extract_product_text_and_structured_with_playwright(
                         url,
                         timeout_ms=fallback_timeout_ms,
                     )
-                if not text:
+                if not text and not any(structured.values()):
                     return None
-            return {"url": url, "text": text}
+            return {"url": url, "text": text, "structured": structured}
 
         tasks = [build_record(u) for u in deduped[:max_sources]]
         records_raw = await asyncio.gather(*tasks)
@@ -528,7 +531,7 @@ class GeminiClient:
                 base = "low"
             return base
 
-        texts_for_llm = [r for r in records_raw if r and r.get("text")]
+        texts_for_llm = [r for r in records_raw if r and (r.get("text") or r.get("structured"))]
         summaries_by_url: dict[str, str] = {}
         if texts_for_llm:
             summaries_by_url = await self._summarize_product_texts_llm(
@@ -594,6 +597,7 @@ class GeminiClient:
                 '{"name":"","brand":"","price":"","currency":"","facts":[]}\n'
                 "Zasady:\n"
                 "- jeśli brak danych, wstaw pusty string lub pustą listę\n"
+                "- NIE traktuj kosztu dostawy/wysyłki jako ceny produktu\n"
                 "- facts: max 4 krótkie fakty (pojemność, materiał, wymiary itp.)\n"
                 "- żadnych komentarzy, żadnego markdown\n\n"
                 f"URL: {url}\n"
@@ -606,6 +610,7 @@ class GeminiClient:
                 '{"name":"","brand":"","price":"","currency":"","facts":[]}\n'
                 "Rules:\n"
                 "- if missing, use empty string or empty list\n"
+                "- do NOT treat shipping/delivery fees as product price\n"
                 "- facts: up to 4 short facts (capacity, material, dimensions, etc.)\n"
                 "- no commentary, no markdown\n\n"
                 f"URL: {url}\n"
@@ -618,10 +623,14 @@ class GeminiClient:
         )
 
         loop = asyncio.get_event_loop()
+        from app.config import get_settings
+        cfg = get_settings()
+        model_name = getattr(cfg, "research_interpretation_model", self.research_model_name)
+
         response = await loop.run_in_executor(
             None,
             lambda: self.client.models.generate_content(
-                model=self.research_model_name,
+                model=model_name,
                 contents=prompt,
                 config=config,
             ),
@@ -651,6 +660,9 @@ class GeminiClient:
         if not isinstance(facts, list):
             facts = []
         facts = [str(f).strip() for f in facts if str(f).strip()]
+        facts = self._filter_shipping_facts(facts)
+        if self._is_shipping_text(price):
+            price = ""
 
         if not any([name, brand, price, facts]):
             return ""
@@ -724,6 +736,21 @@ class GeminiClient:
             return summary
         return f"{summary} [conf:{conf}]"
 
+    def _is_shipping_text(self, text: str) -> bool:
+        if not text:
+            return False
+        t = text.lower()
+        keywords = [
+            "shipping", "delivery", "postage", "courier", "ship", "freight", "handling",
+            "dispatch", "versand", "liefer", "porto", "spedizione", "consegna", "envio",
+            "entrega", "livraison", "expedition", "dostaw", "wysyl", "przesyl", "kurier",
+            "transport",
+        ]
+        return any(k in t for k in keywords)
+
+    def _filter_shipping_facts(self, facts: list[str]) -> list[str]:
+        return [f for f in facts if not self._is_shipping_text(f)]
+
     def _strip_conf_tag(self, summary: str) -> str:
         if not summary:
             return summary
@@ -753,12 +780,13 @@ class GeminiClient:
             for item in items:
                 text = item.get("text") or ""
                 clipped = text[:6000]
+                structured = item.get("structured") or {}
                 entry_size = len(clipped)
                 if current and (current_chars + entry_size > max_chars or len(current) >= max_items):
                     chunks.append(current)
                     current = []
                     current_chars = 0
-                current.append({"url": item.get("url", ""), "text": clipped})
+                current.append({"url": item.get("url", ""), "text": clipped, "structured": structured})
                 current_chars += entry_size
             if current:
                 chunks.append(current)
@@ -772,8 +800,10 @@ class GeminiClient:
                     '[{"url":"","name":"","brand":"","price":"","currency":"","facts":[]}]\\n'
                     "Zasady:\n"
                     "- jeśli brak danych, wstaw pusty string lub pustą listę\n"
+                    "- NIE traktuj kosztu dostawy/wysyłki jako ceny produktu\n"
                     "- price/currency: wpisz dokładnie jak w tekście; jeśli wiele cen, wybierz najniższą\n"
                     "- facts: max 4 krótkie fakty (pojemność, materiał, wymiary itp.)\n"
+                    "- jeśli w polu structured jest cena produktu, możesz ją użyć jako preferowane źródło\n"
                     "- żadnych komentarzy, żadnego markdown\n\n"
                     f"DANE:\n{_json.dumps(chunk, ensure_ascii=True)}"
                 )
@@ -784,8 +814,10 @@ class GeminiClient:
                     '[{"url":"","name":"","brand":"","price":"","currency":"","facts":[]}]\\n'
                     "Rules:\n"
                     "- if missing, use empty string or empty list\n"
+                    "- do NOT treat shipping/delivery fees as product price\n"
                     "- price/currency: copy exactly from text; if multiple prices, choose the lowest\n"
                     "- facts: up to 4 short facts (capacity, material, dimensions, etc.)\n"
+                    "- if structured contains product price, you may use it as preferred source\n"
                     "- no commentary, no markdown\n\n"
                     f"DATA:\n{_json.dumps(chunk, ensure_ascii=True)}"
                 )
@@ -835,6 +867,26 @@ class GeminiClient:
                 if not isinstance(facts, list):
                     facts = []
                 facts = [str(f).strip() for f in facts if str(f).strip()]
+                facts = self._filter_shipping_facts(facts)
+                if self._is_shipping_text(price):
+                    price = ""
+
+                # Prefer structured price if LLM output has no valid price.
+                structured = {}
+                for item in chunk:
+                    if item.get("url") == url:
+                        structured = item.get("structured") or {}
+                        break
+                if structured:
+                    s_price = str(structured.get("price") or "").strip()
+                    s_currency = str(structured.get("currency") or "").strip()
+                    if not price and s_price and not self._is_shipping_text(s_price):
+                        price = s_price
+                        currency = s_currency or currency
+                    if not name:
+                        name = str(structured.get("name") or "").strip()
+                    if not brand:
+                        brand = str(structured.get("brand") or "").strip()
                 summary = self._format_summary_from_fields(
                     name=name,
                     brand=brand,

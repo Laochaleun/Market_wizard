@@ -130,3 +130,10 @@ PY
 ## Notes / Constraints
 - The assistant runtime sometimes lacks DNS; when it fails, tests must be run locally.
 - Avoid adding product‑specific keyword lists; keep filters generic.
+
+## 2026-01-30 Updates
+- Added separate model for interpretation: `research_interpretation_model` (default `gemini-3-flash-preview`) while grounding remains `gemini-2.5-flash-lite`.
+- Grounding now always uses the research model (fix for empty sources when interpretation model was used).
+- Added JSON-LD structured field extraction to prefer product price when available.
+- Added multilingual shipping fee filtering (prompt + post-process) to avoid treating shipping cost as product price.
+- Added product-like URL prioritization and top-5 URL logging; listing/guide sources remain as backup.

@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     llm_model: str = "gemini-2.0-flash-001"
     llm_temperature: float = 0.5
     research_llm_model: str = "gemini-2.5-flash-lite"
+    research_interpretation_model: str = "gemini-3-flash-preview"
     research_playwright_fallback_limit: int = 2
     research_playwright_timeout_ms: int = 15000
     research_json_ld_only: bool = False
