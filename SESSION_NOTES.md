@@ -1,6 +1,44 @@
 # Session Notes (handoff)
 
-Date: 2026-01-29
+Date: 2026-01-30
+
+## 2026-01-30 Updates (Report analysis prompts + sanitize pass)
+- Rewrote report analysis prompts (PL/EN) to enforce literal, data-anchored narrative and stricter recommendation suffixes.
+- Increased report analysis default `max_output_tokens` to **16384**.
+- Added **sanitize pass** (same model) to neutralize storytelling and enforce literal style before rendering.
+- Added server-side enforcement of recommendation suffixes:
+  - `(wsparte danymi)` / `(sygnal do weryfikacji w szerszej probie)` in PL
+  - `(supported by data)` / `(signal to validate with a broader sample)` in EN
+- Added robustness to sanitize parsing when model returns JSON-as-text.
+- Bumped analysis cache key to `v3` in frontend so new prompt/sanitize takes effect.
+
+Files:
+- `backend/app/i18n.py` (prompts + sanitize prompt)
+- `backend/app/services/llm_client.py` (sanitize pass + suffix enforcement)
+- `frontend/main.py` (sanitize pass wired into pipeline, analysis cache key v3)
+- `backend/app/config.py` (report analysis max tokens default)
+
+Notes:
+- EN sanitize previously failed due to misplaced return in prompt; fixed and re-tested.
+- Example regen reports saved to `reports/` (not committed).
+
+## 2026-01-30 Updates (URL extraction + caching + analysis fix)
+- Increased report analysis `max_output_tokens` to **8192**; fixed logging bug that broke analysis (`name 'url' is not defined`).
+- Added **URL extraction button** with visible in-flight status and localized labels (PL/EN).
+- Fixed URL detection & normalization (accepts `www.*` and auto-prepends `https://`).
+- Implemented **strict URL extraction** (fail if not complete); removed slug fallback for incomplete extractions.
+- Added **extraction cache reuse** when running simulation if URL matches last extracted.
+- Persist extracted URL data into project (`product_extracted_full`, `product_extracted_preview`, `product_extracted_url`) and reload on project load.
+- Reuse cached URL extraction across tabs (Simulation / Price Analysis / Focus Group) when URL matches.
+- Manual URL extraction now writes to global cache state so other tabs can reuse immediately.
+
+Commits:
+- `70116fb` fix(ui): url extraction button and status
+- `ccdc76c` feat(ui): cache url extraction across tabs
+
+## Known behaviors / notes
+- URL extraction still only runs when user clicks the button or starts a run; it is not auto-triggered by paste (manual trigger is the reliable path).
+- Playwright can timeout on some pages; HTTP extraction works for toys4boys and returns valid description.
 
 ## Goal
 Stabilize web grounding sources, make links clickable and consistent, reduce hallucinations, and improve source summaries so agents cite real products/prices with [n] citations. Also improve report rendering and diagnostics. The app is Market_wizard.

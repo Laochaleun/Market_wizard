@@ -14,3 +14,10 @@ v0.3.0 (2026-01-30)
 
 Known issue:
 - Gemini 3 Pro Preview sometimes returns empty text in API unless thinking_budget is set; analysis can still fail on some runs.
+
+v0.3.1 (2026-01-30)
+- Overhauled report analysis prompts (PL/EN) for deeper, literal, data-anchored insights and enforced suffixes on recommendations.
+- Increased default report analysis max output tokens to 16384.
+- Added sanitize pass using the same model to neutralize style and remove storytelling artifacts.
+- Enforced recommendation suffixes server-side with automatic validation.
+- Added report analysis sanitize cache refresh (v3) in frontend pipeline.

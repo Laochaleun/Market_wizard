@@ -6,7 +6,7 @@ import logging
 
 from app.config import get_settings
 from app.models import Persona
-from app.i18n import Language, get_persona_prompt, get_report_analysis_prompt
+from app.i18n import Language, get_persona_prompt, get_report_analysis_prompt, get_report_analysis_sanitize_prompt
 
 
 class LLMClient(Protocol):
@@ -99,9 +99,10 @@ class GeminiClient:
         prompt = get_report_analysis_prompt(language, _json.dumps(payload, ensure_ascii=True))
         settings = get_settings()
         thinking_budget = getattr(settings, "report_analysis_thinking_budget", 256)
+        max_output_tokens = getattr(settings, "report_analysis_max_output_tokens", 8192)
         config = types.GenerateContentConfig(
             temperature=0.2,
-            max_output_tokens=8192,
+            max_output_tokens=max_output_tokens,
             thinking_config=types.ThinkingConfig(
                 thinking_budget=thinking_budget,
                 include_thoughts=False,
@@ -148,6 +149,133 @@ class GeminiClient:
                 )
             }
         return self._parse_report_analysis_json(raw)
+
+    async def sanitize_report_analysis(
+        self,
+        *,
+        analysis_sections: dict[str, str],
+        language: Language = Language.PL,
+    ) -> dict[str, str]:
+        """Rewrite report analysis into a literal, neutral style without changing facts."""
+        from google.genai import types
+        import asyncio
+        import json as _json
+
+        payload = {
+            "narrative": analysis_sections.get("narrative", ""),
+            "agent_summary": analysis_sections.get("agent_summary", ""),
+            "recommendations": analysis_sections.get("recommendations", ""),
+        }
+        prompt = get_report_analysis_sanitize_prompt(language, _json.dumps(payload, ensure_ascii=True))
+        settings = get_settings()
+        thinking_budget = getattr(settings, "report_analysis_thinking_budget", 256)
+        config = types.GenerateContentConfig(
+            temperature=0.1,
+            max_output_tokens=8192,
+            thinking_config=types.ThinkingConfig(
+                thinking_budget=thinking_budget,
+                include_thoughts=False,
+            ),
+        )
+
+        model_name = getattr(settings, "report_analysis_model", "gemini-3-pro-preview")
+        loop = asyncio.get_event_loop()
+        self._logger.info(
+            "Report analysis sanitize request | model=%s | language=%s | prompt_chars=%s",
+            model_name,
+            language.value,
+            len(prompt),
+        )
+        response = await loop.run_in_executor(
+            None,
+            lambda: self.client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=config,
+            ),
+        )
+        raw = self._extract_response_text(response).strip()
+        self._logger.info(
+            "Report analysis sanitize response | model=%s | text_len=%s",
+            model_name,
+            len(raw),
+        )
+        if not raw:
+            self._log_report_analysis_debug(response, model_name, language)
+            return analysis_sections
+        parsed = self._parse_report_analysis_json(raw)
+        # If model returned JSON as a raw string inside narrative, try a second parse.
+        narrative_blob = parsed.get("narrative", "") if isinstance(parsed, dict) else ""
+        if isinstance(narrative_blob, str) and ("\"narrative\"" in narrative_blob or "'narrative'" in narrative_blob):
+            reparsed = self._parse_report_analysis_json(narrative_blob)
+            if reparsed and any(reparsed.get(k) for k in ("agent_summary", "recommendations")):
+                parsed = reparsed
+        sanitized = {
+            "narrative": parsed.get("narrative", payload["narrative"]),
+            "agent_summary": parsed.get("agent_summary", payload["agent_summary"]),
+            "recommendations": parsed.get("recommendations", payload["recommendations"]),
+        }
+        sanitized["recommendations"] = self._enforce_recommendation_suffixes(
+            sanitized.get("recommendations", ""),
+            language,
+        )
+        return sanitized
+
+    @staticmethod
+    def _enforce_recommendation_suffixes(text: str, language: Language) -> str:
+        import re
+
+        raw = (text or "").strip()
+        if not raw:
+            return raw
+
+        if language == Language.PL:
+            supported = "(wsparte danymi)"
+            signal = "(sygnal do weryfikacji w szerszej probie)"
+            evidence_terms = [
+                "lodz", "katowic", "podlas", "kaszub", "lublin", "warszaw", "marki",
+                "szczecin", "kierowc", "mechanik", "policj", "nauczyciel", "elektryk",
+                "sprzedawc", "logistyk", "transport", "sluzb", "mundur", "doch",
+            ]
+        else:
+            supported = "(supported by data)"
+            signal = "(signal to validate with a broader sample)"
+            evidence_terms = [
+                "lodz", "katowic", "podlas", "kaszub", "lublin", "warsaw", "marki",
+                "szczecin", "driver", "mechanic", "police", "teacher", "electrician",
+                "sales", "logistic", "transport", "uniform", "income",
+            ]
+
+        bullet_re = re.compile(r"^(\s*[-*]\s+)(.+)$")
+        suffix_re = re.compile(
+            r"\s*\((?:wsparte danymi|sygnal do weryfikacji w szerszej probie|supported by data|signal to validate with a broader sample)\)\.?\s*$"
+        )
+        suffix_any_re = re.compile(
+            r"\s*\((?:wsparte danymi|sygnal do weryfikacji w szerszej probie|supported by data|signal to validate with a broader sample)\)\.?\s*"
+        )
+
+        def has_evidence(line: str) -> bool:
+            low = line.lower()
+            if re.search(r"\d", low):
+                return True
+            return any(term in low for term in evidence_terms)
+
+        lines = raw.split("\n")
+        out_lines: list[str] = []
+        for line in lines:
+            m = bullet_re.match(line)
+            if not m:
+                out_lines.append(line)
+                continue
+            prefix, body = m.group(1), m.group(2)
+            body_clean = suffix_any_re.sub(" ", body).strip()
+            if has_evidence(body_clean):
+                suffix = supported
+            else:
+                suffix = signal
+            out_lines.append(f"{prefix}{body_clean} {suffix}")
+
+        return "\n".join(out_lines)
 
     @staticmethod
     def _extract_response_text(response: object) -> str:

@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     research_interpretation_model: str = "gemini-3-flash-preview"
     report_analysis_model: str = "gemini-3-pro-preview"
     report_analysis_thinking_budget: int = 256
+    report_analysis_max_output_tokens: int = 16384
     research_playwright_fallback_limit: int = 2
     research_playwright_timeout_ms: int = 15000
     research_json_ld_only: bool = False

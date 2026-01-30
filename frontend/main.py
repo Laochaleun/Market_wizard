@@ -182,7 +182,21 @@ async def _generate_report_analysis_async(
     if not client:
         return None
     payload = _build_report_analysis_payload(result, product_description, lang)
-    return await client.generate_report_analysis(payload=payload, language=lang)
+    analysis_sections = await client.generate_report_analysis(payload=payload, language=lang)
+    if not analysis_sections:
+        return None
+    # Optional sanitize pass to enforce literal, neutral style
+    try:
+        if hasattr(client, "sanitize_report_analysis"):
+            sanitized = await client.sanitize_report_analysis(
+                analysis_sections=analysis_sections,
+                language=lang,
+            )
+            if sanitized and any((sanitized.get("narrative"), sanitized.get("agent_summary"), sanitized.get("recommendations"))):
+                return sanitized
+    except Exception as e:
+        logging.getLogger(__name__).warning("Report analysis sanitize failed: %s", e)
+    return analysis_sections
 
 
 def build_simulation_summary(result: SimulationResult, lang: Language) -> str:
@@ -1080,7 +1094,7 @@ def generate_report(lang_code: str, only_cited_sources: bool):
         analysis_sections = None
         settings = get_settings()
         model_name = getattr(settings, "report_analysis_model", "gemini-3-pro-preview")
-        analysis_key = f"{lang.value}:{_last_simulation_result.id}:{model_name}:v2"
+        analysis_key = f"{lang.value}:{_last_simulation_result.id}:{model_name}:v3"
         if _last_report_analysis_key == analysis_key:
             analysis_sections = _last_report_analysis
             if analysis_sections:
@@ -1162,7 +1176,7 @@ def export_report(lang_code: str, export_format: str, only_cited_sources: bool):
         analysis_sections = None
         settings = get_settings()
         model_name = getattr(settings, "report_analysis_model", "gemini-3-pro-preview")
-        analysis_key = f"{lang.value}:{_last_simulation_result.id}:{model_name}:v2"
+        analysis_key = f"{lang.value}:{_last_simulation_result.id}:{model_name}:v3"
         if _last_report_analysis_key == analysis_key:
             analysis_sections = _last_report_analysis
             if analysis_sections:
