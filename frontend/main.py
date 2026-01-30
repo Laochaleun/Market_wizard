@@ -1214,7 +1214,9 @@ def export_report(lang_code: str, export_format: str, only_cited_sources: bool):
     
     try:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_dir = PathlibPath(tempfile.gettempdir()) / "market_wizard_reports"
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        # Use project-relative 'reports' directory instead of system temp
+        output_dir = Path("reports").resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
         
         if export_format == "PDF":
@@ -1572,13 +1574,18 @@ def export_focus_group(lang_code: str, export_format: str) -> tuple[str | None, 
         try:
             from weasyprint import HTML
             filename = f"focus_group_{timestamp}.pdf"
-            filepath = Path(tempfile.gettempdir()) / filename
+            # Use project-relative 'reports' directory
+            output_dir = Path("reports").resolve()
+            output_dir.mkdir(parents=True, exist_ok=True)
+            filepath = output_dir / filename
             HTML(string=html_content).write_pdf(str(filepath))
         except ImportError:
             return None, "❌ PDF export requires weasyprint. Install with: pip install weasyprint"
     else:
         filename = f"focus_group_{timestamp}.html"
-        filepath = Path(tempfile.gettempdir()) / filename
+        output_dir = Path("reports").resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        filepath = output_dir / filename
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(html_content)
     
