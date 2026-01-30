@@ -1259,11 +1259,10 @@ def export_report(lang_code: str, export_format: str, only_cited_sources: bool):
         logger = logging.getLogger(__name__)
         logger.info(f"Report exported to: {output_path} | exists={output_path.exists()}")
         
-        # Return as gr.File for proper Gradio handling
         if lang == Language.EN:
-            return gr.File(value=str(output_path), visible=True), f"✅ Exported: {output_path.name}"
+            return str(output_path), f"✅ Exported: {output_path.name}"
         else:
-            return gr.File(value=str(output_path), visible=True), f"✅ Wyeksportowano: {output_path.name}"
+            return str(output_path), f"✅ Wyeksportowano: {output_path.name}"
 
     
     except Exception as e:
@@ -1593,7 +1592,7 @@ def export_focus_group(lang_code: str, export_format: str) -> tuple[str | None, 
             f.write(html_content)
     
     msg = f"✅ Exported to {filename}" if lang == Language.EN else f"✅ Wyeksportowano do {filename}"
-    return gr.File(value=str(filepath), visible=True), msg
+    return str(filepath), msg
 
 
 # === Project Management ===
