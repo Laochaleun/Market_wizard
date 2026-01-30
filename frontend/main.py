@@ -1256,10 +1256,15 @@ def export_report(lang_code: str, export_format: str, only_cited_sources: bool):
             with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(_last_report_html)
         
+        # Log successful export for debugging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Report exported to: {output_path} | exists={output_path.exists()}")
+        
         if lang == Language.EN:
             return str(output_path), f"✅ Exported: {output_path.name}"
         else:
             return str(output_path), f"✅ Wyeksportowano: {output_path.name}"
+
     
     except Exception as e:
         import traceback
@@ -3041,9 +3046,13 @@ def create_interface():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+    # Ensure reports directory exists
+    reports_dir = Path("reports").resolve()
+    reports_dir.mkdir(parents=True, exist_ok=True)
     demo = create_interface()
     demo.launch(
         server_name="0.0.0.0",
         server_port=7860,
         share=False,
+        allowed_paths=[str(reports_dir)],
     )
