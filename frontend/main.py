@@ -1214,8 +1214,8 @@ def export_report(lang_code: str, export_format: str, only_cited_sources: bool):
     
     try:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        # Use project-relative 'reports' directory (works both locally and in Docker)
-        output_dir = PROJECT_BASE_DIR / "reports"
+        # Use system temp directory for reliable Gradio file serving
+        output_dir = Path(tempfile.gettempdir()) / "market_wizard_reports"
         output_dir.mkdir(parents=True, exist_ok=True)
         
         if export_format == "PDF":
@@ -1259,10 +1259,11 @@ def export_report(lang_code: str, export_format: str, only_cited_sources: bool):
         logger = logging.getLogger(__name__)
         logger.info(f"Report exported to: {output_path} | exists={output_path.exists()}")
         
+        # Return as gr.File for proper Gradio handling
         if lang == Language.EN:
-            return str(output_path), f"✅ Exported: {output_path.name}"
+            return gr.File(value=str(output_path), visible=True), f"✅ Exported: {output_path.name}"
         else:
-            return str(output_path), f"✅ Wyeksportowano: {output_path.name}"
+            return gr.File(value=str(output_path), visible=True), f"✅ Wyeksportowano: {output_path.name}"
 
     
     except Exception as e:
@@ -1573,28 +1574,26 @@ def export_focus_group(lang_code: str, export_format: str) -> tuple[str | None, 
     
     # Save to file
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Use system temp directory for reliable Gradio file serving
+    output_dir = Path(tempfile.gettempdir()) / "market_wizard_reports"
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     if export_format == "PDF":
         try:
             from weasyprint import HTML
             filename = f"focus_group_{timestamp}.pdf"
-            # Use project-relative 'reports' directory (works both locally and in Docker)
-            output_dir = PROJECT_BASE_DIR / "reports"
-            output_dir.mkdir(parents=True, exist_ok=True)
             filepath = output_dir / filename
             HTML(string=html_content).write_pdf(str(filepath))
         except ImportError:
             return None, "❌ PDF export requires weasyprint. Install with: pip install weasyprint"
     else:
         filename = f"focus_group_{timestamp}.html"
-        output_dir = PROJECT_BASE_DIR / "reports"
-        output_dir.mkdir(parents=True, exist_ok=True)
         filepath = output_dir / filename
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(html_content)
     
     msg = f"✅ Exported to {filename}" if lang == Language.EN else f"✅ Wyeksportowano do {filename}"
-    return str(filepath), msg
+    return gr.File(value=str(filepath), visible=True), msg
 
 
 # === Project Management ===
@@ -3045,14 +3044,14 @@ def create_interface():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    # Ensure reports directory exists (using same path as export functions)
-    reports_dir = PROJECT_BASE_DIR / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    logging.getLogger(__name__).info(f"Reports directory: {reports_dir}")
+    # Ensure temp reports directory exists and is allowed by Gradio
+    temp_reports_dir = Path(tempfile.gettempdir()) / "market_wizard_reports"
+    temp_reports_dir.mkdir(parents=True, exist_ok=True)
+    logging.getLogger(__name__).info(f"Reports temp directory: {temp_reports_dir}")
     demo = create_interface()
     demo.launch(
         server_name="0.0.0.0",
         server_port=7860,
         share=False,
-        allowed_paths=[str(reports_dir)],
+        allowed_paths=[str(temp_reports_dir)],
     )
