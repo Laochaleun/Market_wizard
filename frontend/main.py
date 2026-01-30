@@ -1214,9 +1214,8 @@ def export_report(lang_code: str, export_format: str, only_cited_sources: bool):
     
     try:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        # Use system temp directory for reliable Gradio file serving
-        output_dir = Path(tempfile.gettempdir()) / "market_wizard_reports"
-        output_dir.mkdir(parents=True, exist_ok=True)
+        # Use system temp directory directly - Gradio auto-caches files from tempfile.gettempdir()
+        output_dir = Path(tempfile.gettempdir())
         
         if export_format == "PDF":
             # Export as PDF using Playwright if available, otherwise use weasyprint
@@ -1573,9 +1572,8 @@ def export_focus_group(lang_code: str, export_format: str) -> tuple[str | None, 
     
     # Save to file
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    # Use system temp directory for reliable Gradio file serving
-    output_dir = Path(tempfile.gettempdir()) / "market_wizard_reports"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Use system temp directory directly - Gradio auto-caches files from tempfile.gettempdir()
+    output_dir = Path(tempfile.gettempdir())
     
     if export_format == "PDF":
         try:
@@ -3043,14 +3041,11 @@ def create_interface():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    # Ensure temp reports directory exists and is allowed by Gradio
-    temp_reports_dir = Path(tempfile.gettempdir()) / "market_wizard_reports"
-    temp_reports_dir.mkdir(parents=True, exist_ok=True)
-    logging.getLogger(__name__).info(f"Reports temp directory: {temp_reports_dir}")
+    # Log temp directory - Gradio auto-serves files from tempfile.gettempdir()
+    logging.getLogger(__name__).info(f"System temp directory: {tempfile.gettempdir()}")
     demo = create_interface()
     demo.launch(
         server_name="0.0.0.0",
         server_port=7860,
         share=False,
-        allowed_paths=[str(temp_reports_dir)],
     )
