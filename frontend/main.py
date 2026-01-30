@@ -50,6 +50,7 @@ _last_product_input_raw = None
 _last_simulation_inputs = None
 _last_extracted_preview = None
 _last_extracted_full = None
+_last_extracted_url = None
 
 _last_ab_test_result = None
 _last_ab_test_inputs = None
@@ -545,6 +546,12 @@ def autosave_simulation_project(
         extracted_full = inputs.get("product_extracted_full")
         if extracted_full:
             project["product_extracted_full"] = extracted_full
+        extracted_preview = inputs.get("product_extracted_preview")
+        if extracted_preview:
+            project["product_extracted_preview"] = extracted_preview
+        extracted_url = inputs.get("product_extracted_url")
+        if extracted_url:
+            project["product_extracted_url"] = extracted_url
 
         target_audience = inputs.get("target_audience") or project.get("target_audience")
         if target_audience:
@@ -784,15 +791,15 @@ async def _preview_extract_from_input_async(
     normalized = normalize_url(product_input)
     if not is_url(normalized):
         msg = "❌ To nie wygląda jak URL." if lang == Language.PL else "❌ This doesn't look like a URL."
-        yield msg, "", "", last_url or ""
+        yield msg, "", "", "", last_url or ""
         return
     if normalized == (last_url or ""):
-        yield gr.update(), gr.update(), gr.update(), last_url
+        yield gr.update(), gr.update(), gr.update(), gr.update(), last_url
         return
 
     logging.getLogger(__name__).info("Manual URL extraction start: %s", normalized)
     waiting = "⏳ Pobieranie danych z URL..." if lang == Language.PL else "⏳ Fetching data from URL..."
-    yield waiting, "", "", last_url or ""
+    yield waiting, "", "", "", last_url or ""
 
     try:
         description, status = await process_product_input(normalized, lang)
@@ -803,13 +810,17 @@ async def _preview_extract_from_input_async(
             if lang == Language.PL
             else f"❌ Could not fetch URL: {exc}"
         )
-        yield msg, "", "", normalized
+        yield msg, "", "", "", normalized
         return
     if not description:
         logging.getLogger(__name__).warning("Manual URL extraction failed: %s", status)
-        yield status or "", "", "", normalized
+        yield status or "", "", "", "", normalized
         return
     preview = _shorten_extracted(description, lang)
+    global _last_extracted_full, _last_extracted_preview, _last_extracted_url
+    _last_extracted_full = description
+    _last_extracted_preview = preview
+    _last_extracted_url = normalized
     if lang == Language.PL:
         preview = f"**Wyciągnięte dane:** {preview}"
         full = f"**Pełny opis:** {description}"
@@ -818,7 +829,7 @@ async def _preview_extract_from_input_async(
         preview = f"**Extracted data:** {preview}"
         full = f"**Full description:** {description}"
         done = "✅ Extracted data from URL."
-    yield done, preview, full, normalized
+    yield done, preview, full, description, normalized
     return
 
 
@@ -833,6 +844,8 @@ def update_extract_button_label(lang_code: str):
 async def run_simulation_async(
     lang_code: str,
     product_description: str,
+    extracted_raw: str,
+    last_extracted_url: str,
     n_agents: int,
     age_min: int,
     age_max: int,
@@ -849,24 +862,67 @@ async def run_simulation_async(
     
     if not product_description.strip():
         err = get_label(lang, "error_no_product")
-        return None, err, "", err, gr.update(), "", ""
+        return (
+            None,
+            err,
+            "",
+            err,
+            gr.update(),
+            "",
+            "",
+            "",
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+        )
 
     progress(0, desc="Initializing..." if lang == Language.EN else "Inicjalizacja...")
     url_status_msg = ""
+    extract_status = ""
     extracted_preview = ""
     extracted_full = ""
+    extracted_url = ""
     input_product_raw = product_description.strip()
 
     try:
         # Process product input - extract from URL if needed
         if is_url(product_description.strip()):
-            progress(0.05, desc="🔗 Fetching product from URL..." if lang == Language.EN else "🔗 Pobieranie produktu z URL...")
-            product_description, url_status = await process_product_input(product_description, lang)
-            url_status_msg = url_status or ""
-            extracted_full = product_description
-            extracted_preview = _shorten_extracted(product_description, lang)
-            if not product_description:
-                return None, "Could not extract product from URL", "", "❌", gr.update(), "", ""
+            normalized_input = normalize_url(product_description.strip())
+            if extracted_raw and normalized_input == (last_extracted_url or ""):
+                product_description = extracted_raw
+                extracted_full = extracted_raw
+                extracted_preview = _shorten_extracted(extracted_raw, lang)
+                extracted_url = normalized_input
+                extract_status = (
+                    "✅ Użyto wcześniej pobranych danych z URL."
+                    if lang == Language.PL
+                    else "✅ Reused previously extracted URL data."
+                )
+            else:
+                progress(0.05, desc="🔗 Fetching product from URL..." if lang == Language.EN else "🔗 Pobieranie produktu z URL...")
+                product_description, url_status = await process_product_input(product_description, lang)
+                url_status_msg = url_status or ""
+                extracted_full = product_description
+                extracted_preview = _shorten_extracted(product_description, lang)
+                extracted_url = normalized_input
+                if not product_description:
+                    return (
+                        None,
+                        "Could not extract product from URL",
+                        "",
+                        "❌",
+                        gr.update(),
+                        "",
+                        "",
+                        "",
+                        gr.update(),
+                        gr.update(),
+                        gr.update(),
+                        gr.update(),
+                        gr.update(),
+                    )
         # Handle language-specific "All" values
         all_value = "All" if lang == Language.EN else "Wszystkie"
         
@@ -923,15 +979,20 @@ async def run_simulation_async(
 
         # Store result for report generation and project saving
         global _last_simulation_result, _last_product_description, _last_product_input_raw
-        global _last_simulation_inputs, _last_extracted_preview, _last_extracted_full
+        global _last_simulation_inputs, _last_extracted_preview, _last_extracted_full, _last_extracted_url
         _last_simulation_result = result
         _last_product_description = product_description
         _last_product_input_raw = input_product_raw
+        if extracted_full:
+            _last_extracted_full = extracted_full
+            _last_extracted_preview = extracted_preview
+            _last_extracted_url = extracted_url or normalize_url(input_product_raw)
         sim_inputs = {
             "product_description": product_description,
             "product_input_raw": input_product_raw,
             "product_extracted_full": extracted_full,
             "product_extracted_preview": extracted_preview,
+            "product_extracted_url": extracted_url,
             "n_agents": n_agents,
             "target_audience": profile.model_dump(),
             "enable_web_search": enable_web_search,
@@ -968,8 +1029,11 @@ async def run_simulation_async(
             opinions,
             status_msg,
             dirty_value,
+            extract_status,
             extracted_preview,
             extracted_full,
+            extracted_full or "",
+            extracted_url or "",
             gr.update(value=input_product_raw),
             gr.update(value=input_product_raw),
             gr.update(value=input_product_raw),
@@ -986,6 +1050,9 @@ async def run_simulation_async(
             gr.update(),
             "",
             "",
+            "",
+            gr.update(),
+            gr.update(),
             gr.update(),
             gr.update(),
             gr.update(),
@@ -1264,6 +1331,18 @@ async def run_price_analysis_async(
     progress(0, desc="Analyzing price sensitivity..." if lang == Language.EN else "Analizowanie wrażliwości cenowej...")
 
     try:
+        if is_url(product_description.strip()):
+            normalized_input = normalize_url(product_description.strip())
+            global _last_extracted_full, _last_extracted_url, _last_extracted_preview
+            if _last_extracted_full and normalized_input == (_last_extracted_url or ""):
+                product_description = _last_extracted_full
+            else:
+                product_description, _ = await process_product_input(product_description, lang)
+                if not product_description:
+                    return get_label(lang, "error_no_product"), None, "❌", gr.update()
+                _last_extracted_full = product_description
+                _last_extracted_preview = _shorten_extracted(product_description, lang)
+                _last_extracted_url = normalized_input
         # Generate price points
         price_points = list(np.linspace(price_min, price_max, int(n_points)))
 
@@ -1330,9 +1409,17 @@ async def run_focus_group_async(
     try:
         # Process product input - extract from URL if needed
         if is_url(product.strip()):
-            product, _ = await process_product_input(product, lang)
-            if not product:
-                return "", "", "❌ Could not extract product from URL"
+            normalized_input = normalize_url(product.strip())
+            global _last_extracted_full, _last_extracted_url, _last_extracted_preview
+            if _last_extracted_full and normalized_input == (_last_extracted_url or ""):
+                product = _last_extracted_full
+            else:
+                product, _ = await process_product_input(product, lang)
+                if not product:
+                    return "", "", "❌ Could not extract product from URL"
+                _last_extracted_full = product
+                _last_extracted_preview = _shorten_extracted(product, lang)
+                _last_extracted_url = normalized_input
         
         engine = FocusGroupEngine(language=lang)
         
@@ -1611,6 +1698,8 @@ def save_project(
 
     product_input_raw = input_product or _last_product_input_raw or existing.get("product_input_raw", "")
     product_extracted_full = _last_extracted_full or existing.get("product_extracted_full", "")
+    product_extracted_preview = _last_extracted_preview or _shorten_extracted(product_extracted_full, lang)
+    product_extracted_url = _last_extracted_url or existing.get("product_extracted_url", "")
 
     target_audience = existing.get("target_audience")
     if _last_simulation_inputs:
@@ -1636,6 +1725,8 @@ def save_project(
                 "product_description": input_product or product_description,
                 "product_input_raw": product_input_raw,
                 "product_extracted_full": product_extracted_full,
+                "product_extracted_preview": product_extracted_preview,
+                "product_extracted_url": product_extracted_url,
                 "n_agents": n_agents,
                 "target_audience": target_audience,
                 "enable_web_search": enable_web_search,
@@ -1650,6 +1741,8 @@ def save_project(
                 "product_description": input_product or product_description,
                 "product_input_raw": product_input_raw,
                 "product_extracted_full": product_extracted_full,
+                "product_extracted_preview": product_extracted_preview,
+                "product_extracted_url": product_extracted_url,
                 "n_agents": n_agents,
                 "target_audience": target_audience,
                 "enable_web_search": enable_web_search,
@@ -1717,6 +1810,12 @@ def save_project(
         "target_audience": target_audience,
         "research": research,
     }
+    if product_extracted_full:
+        project["product_extracted_full"] = product_extracted_full
+        if product_extracted_preview:
+            project["product_extracted_preview"] = product_extracted_preview
+    if product_extracted_url:
+        project["product_extracted_url"] = product_extracted_url
 
     saved = store.save_project(project)
     projects = store.list_projects()
@@ -1749,7 +1848,7 @@ def load_project(
     logger = logging.getLogger(__name__)
     def _no_change_updates(count: int) -> list:
         return [gr.update() for _ in range(count)]
-    total_outputs = 48
+    total_outputs = 50
     status_index = 9
 
     def _confirm_message(message: str):
@@ -1772,7 +1871,7 @@ def load_project(
             msg,
             gr.update(visible=False),
             gr.update(visible=False),
-            *_no_change_updates(36),
+            *_no_change_updates(38),
         )
 
     if project_dirty and not allow_discard:
@@ -1932,6 +2031,19 @@ def load_project(
 
         extracted_full = sim_inputs.get("product_extracted_full") or project.get("product_extracted_full", "")
         extracted_preview = sim_inputs.get("product_extracted_preview") or _shorten_extracted(extracted_full, lang)
+        extracted_url_value = (
+            sim_inputs.get("product_extracted_url")
+            or project.get("product_extracted_url", "")
+        )
+        if not extracted_url_value and is_url(product_value):
+            extracted_url_value = normalize_url(product_value)
+
+        global _last_extracted_full, _last_extracted_preview, _last_extracted_url
+        if extracted_full:
+            _last_extracted_full = extracted_full
+            _last_extracted_preview = _shorten_extracted(extracted_full, lang)
+        if extracted_url_value:
+            _last_extracted_url = extracted_url_value
 
         if extracted_preview:
             if lang == Language.PL:
@@ -1964,6 +2076,8 @@ def load_project(
         gr.update(value=product_value),
         gr.update(value=extracted_preview or ""),
         gr.update(value=extracted_full or ""),
+        gr.update(value=extracted_full or ""),
+        gr.update(value=extracted_url_value or ""),
         gr.update(value=age_min_value),
         gr.update(value=age_max_value),
         gr.update(value=gender_value),
@@ -2006,6 +2120,8 @@ def load_project(
         updates[13] = gr.update(value="")
         updates[14] = gr.update(value="")
         updates[15] = gr.update(value="")
+        updates[16] = gr.update(value="")
+        updates[17] = gr.update(value="")
         return tuple(updates)
 
 
@@ -2018,7 +2134,7 @@ def maybe_autoload_project(
 ):
     """Auto-load project on selection if enabled."""
     if not auto_load:
-        return tuple(gr.update() for _ in range(48))
+        return tuple(gr.update() for _ in range(50))
     return load_project(lang_code, project_id, allow_discard, project_dirty)
 
 
@@ -2065,6 +2181,7 @@ def create_interface():
         allow_discard_state = gr.State(value=False)
         allow_discard_true = gr.State(value=True)
         last_url_state = gr.State(value="")
+        extracted_raw_state = gr.State(value="")
         
         gr.Markdown("*SSR-based purchase intent simulation using AI*")
         gr.Markdown("---")
@@ -2459,6 +2576,8 @@ def create_interface():
                         product_input,
                         extracted_product_preview,
                         extracted_product_full,
+                        extracted_raw_state,
+                        last_url_state,
                         age_min,
                         age_max,
                         gender,
@@ -2556,6 +2675,8 @@ def create_interface():
                         product_input,
                         extracted_product_preview,
                         extracted_product_full,
+                        extracted_raw_state,
+                        last_url_state,
                         age_min,
                         age_max,
                         gender,
@@ -2645,6 +2766,8 @@ def create_interface():
                         product_input,
                         extracted_product_preview,
                         extracted_product_full,
+                        extracted_raw_state,
+                        last_url_state,
                         age_min,
                         age_max,
                         gender,
@@ -2703,6 +2826,8 @@ def create_interface():
                         product_input,
                         extracted_product_preview,
                         extracted_product_full,
+                        extracted_raw_state,
+                        last_url_state,
                         age_min,
                         age_max,
                         gender,
@@ -2834,7 +2959,13 @@ def create_interface():
         extract_url_btn.click(
             fn=_preview_extract_from_input_async,
             inputs=[product_input, language_select, last_url_state],
-            outputs=[extract_status, extracted_product_preview, extracted_product_full, last_url_state],
+            outputs=[
+                extract_status,
+                extracted_product_preview,
+                extracted_product_full,
+                extracted_raw_state,
+                last_url_state,
+            ],
         )
         language_select.change(
             fn=update_extract_button_label,
@@ -2855,6 +2986,8 @@ def create_interface():
             inputs=[
                 language_select,
                 product_input,
+                extracted_raw_state,
+                last_url_state,
                 n_agents,
                 age_min,
                 age_max,
@@ -2871,8 +3004,11 @@ def create_interface():
                 opinions_output,
                 status,
                 project_dirty,
+                extract_status,
                 extracted_product_preview,
                 extracted_product_full,
+                extracted_raw_state,
+                last_url_state,
                 variant_a_input,
                 price_product,
                 fg_product,

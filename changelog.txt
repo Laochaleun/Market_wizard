@@ -7,6 +7,10 @@ v0.3.0 (2026-01-30)
 - Report HTML print layout improvements (avoid page breaks in charts).
 - Added report analysis debugging logs.
 - Bug fixes for report analysis caching and export regeneration.
+- URL extraction flow improvements: visible “Fetch from URL” button with in-flight status and stricter URL detection.
+- URL normalization now accepts www.* inputs and uses https:// automatically.
+- Reuse extracted URL data across simulation, price analysis, and focus group without re-fetching.
+- Persist extracted URL data in projects and reload on project load.
 
 Known issue:
 - Gemini 3 Pro Preview sometimes returns empty text in API unless thinking_budget is set; analysis can still fail on some runs.
