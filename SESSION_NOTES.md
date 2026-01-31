@@ -51,19 +51,23 @@ According to Gradio documentation, files from `tempfile.gettempdir()` should aut
 
 ### Export function returns:
 ```python
-download_url = f"/download-report/{output_path.name}"
+download_url = _build_download_url(output_path.name, request)
 download_link = f'<a href="{download_url}" download="{output_path.name}" style="...">📥 Download {output_path.name}</a>'
 return download_link, f"✅ Gotowe do pobrania"
 ```
 
 ### Download endpoint:
 ```python
+app = FastAPI()
+
 @app.get("/download-report/{filename}")
 async def download_report(filename: str):
     filepath = Path(tempfile.gettempdir()) / filename
     if not filepath.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {filename}")
     return FileResponse(path=str(filepath), filename=filename, media_type=media_type)
+
+app = gr.mount_gradio_app(app, demo, path="/")
 ```
 
 ### UI component:
@@ -74,8 +78,8 @@ export_file = gr.HTML(label="📥 Download / Pobierz")
 ## Hypotheses to Test in Next Session
 
 1. **HF Spaces proxy issue**: HF Spaces might be proxying requests and blocking non-Gradio routes
-2. **Route registration timing**: The download endpoint might not be properly registered before `demo.launch()`
-3. **Need to use `gr.mount_gradio_app()` pattern**: Instead of adding routes to Gradio's app, mount Gradio into a FastAPI app
+2. **Route registration timing**: The download endpoint might not be properly registered before `demo.launch()` (resolved locally with FastAPI mount)
+3. **Need to use `gr.mount_gradio_app()` pattern**: Instead of adding routes to Gradio's app, mount Gradio into a FastAPI app (implemented locally)
 4. **Gradio's `root_path` configuration**: HF Spaces might use a different root path that breaks relative URLs
 5. **Use absolute URL with HF Spaces domain**: Instead of `/download-report/...`, use full URL `https://pa-sk-market-wizard.hf.space/download-report/...`
 
