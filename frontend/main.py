@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 import gradio as gr
+from gradio import processing_utils, utils as gr_utils
 import numpy as np
 import pandas as pd
 
@@ -1162,7 +1163,7 @@ _last_report_html = None
 _last_report_only_cited = None
 
 
-def _build_download_url(filename: str, request: gr.Request | None) -> str:
+def _build_app_url(relative_path: str, request: gr.Request | None) -> str:
     logger = logging.getLogger(__name__)
     sign_token: str | None = None
     if request:
@@ -1175,11 +1176,12 @@ def _build_download_url(filename: str, request: gr.Request | None) -> str:
     external_base_url = os.getenv("MARKET_WIZARD_EXTERNAL_BASE_URL")
     if external_base_url:
         logger.info(
-            "Download URL override via MARKET_WIZARD_EXTERNAL_BASE_URL=%s filename=%s",
+            "Download URL override via MARKET_WIZARD_EXTERNAL_BASE_URL=%s path=%s",
             external_base_url,
-            filename,
+            relative_path,
         )
-        base = urljoin(external_base_url.rstrip("/") + "/", f"download-report/{filename}")
+        relative = relative_path.lstrip("/")
+        base = urljoin(external_base_url.rstrip("/") + "/", relative)
         if sign_token:
             parsed = urlparse(base)
             query = dict(parse_qsl(parsed.query))
@@ -1193,17 +1195,18 @@ def _build_download_url(filename: str, request: gr.Request | None) -> str:
             root_path = scope.get("root_path")
             url = getattr(request, "url", None)
             logger.debug(
-                "Download URL request_url=%s root_path=%s filename=%s",
+                "Download URL request_url=%s root_path=%s path=%s",
                 url,
                 root_path,
-                filename,
+                relative_path,
             )
         except Exception:
-            logger.debug("Download URL request_url unavailable, filename=%s", filename)
+            logger.debug("Download URL request_url unavailable, path=%s", relative_path)
         base_url = getattr(request, "base_url", None)
         if base_url:
-            logger.debug("Download URL base_url=%s filename=%s", base_url, filename)
-            base = urljoin(str(base_url), f"download-report/{filename}")
+            logger.debug("Download URL base_url=%s path=%s", base_url, relative_path)
+            relative = relative_path.lstrip("/")
+            base = urljoin(str(base_url), relative)
             if sign_token:
                 parsed = urlparse(base)
                 query = dict(parse_qsl(parsed.query))
@@ -1216,12 +1219,13 @@ def _build_download_url(filename: str, request: gr.Request | None) -> str:
         host = headers.get("x-forwarded-host") or headers.get("host")
         if proto and host:
             logger.debug(
-                "Download URL forwarded proto=%s host=%s filename=%s",
+                "Download URL forwarded proto=%s host=%s path=%s",
                 proto,
                 host,
-                filename,
+                relative_path,
             )
-            base = f"{proto}://{host}/download-report/{filename}"
+            relative = relative_path.lstrip("/")
+            base = f"{proto}://{host}/{relative}"
             if sign_token:
                 parsed = urlparse(base)
                 query = dict(parse_qsl(parsed.query))
@@ -1238,7 +1242,7 @@ def _build_download_url(filename: str, request: gr.Request | None) -> str:
             "Download URL fallback to relative path, headers=%s",
             filtered_headers,
         )
-    base = f"/download-report/{filename}"
+    base = relative_path if relative_path.startswith("/") else f"/{relative_path}"
     if sign_token:
         parsed = urlparse(base)
         query = dict(parse_qsl(parsed.query))
@@ -1352,7 +1356,10 @@ def export_report(
         logger.info(f"Report exported to: {output_path} | exists={output_path.exists()}")
         
         # Return download URL as HTML link (bypasses Gradio file handling bug)
-        download_url = _build_download_url(output_path.name, request)
+        cache_dir = str(gr_utils.get_cache_folder())
+        cached_path = processing_utils.save_file_to_cache(output_path, cache_dir)
+        download_path = f"/file={cached_path}"
+        download_url = _build_app_url(download_path, request)
         download_link = f'<a href="{download_url}" download="{output_path.name}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:white;text-decoration:none;border-radius:6px;font-weight:bold;">📥 Download {output_path.name}</a>'
         logger.info("Export download link generated | filename=%s url=%s", output_path.name, download_url)
         if lang == Language.EN:
@@ -1691,7 +1698,10 @@ def export_focus_group(
             f.write(html_content)
     
     # Return download URL as HTML link (bypasses Gradio file handling bug)
-    download_url = _build_download_url(filepath.name, request)
+    cache_dir = str(gr_utils.get_cache_folder())
+    cached_path = processing_utils.save_file_to_cache(filepath, cache_dir)
+    download_path = f"/file={cached_path}"
+    download_url = _build_app_url(download_path, request)
     download_link = f'<a href="{download_url}" download="{filepath.name}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:white;text-decoration:none;border-radius:6px;font-weight:bold;">📥 Download {filepath.name}</a>'
     logging.getLogger(__name__).info(
         "Export download link generated | filename=%s url=%s",
