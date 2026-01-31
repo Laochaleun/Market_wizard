@@ -3210,7 +3210,7 @@ def create_interface():
         gr.Markdown(
             """
             ---
-            *Market Wizard v0.3.0 | Based on arXiv:2510.08338 | PL/EN*
+            *Market Wizard v0.4.0 | Based on arXiv:2510.08338 | PL/EN*
             """
         )
 
