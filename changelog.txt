@@ -27,3 +27,7 @@ v0.3.5 (2026-01-31)
 - Added logging and write permission handling (chmod 777) for persistent report storage on server.
 - Synced GitHub (origin) and Hugging Face (hf) repositories for consistent deployment.
 
+v0.3.6 (2026-01-31)
+- Fixed download endpoint routing by mounting Gradio into FastAPI and serving files via a dedicated `/download-report/{filename}` route.
+- Export links now use request-aware absolute URLs (base_url / forwarded headers) to play nicely with proxies.
+- Added targeted logging around download URL construction and Gradio mount for easier HF debugging.

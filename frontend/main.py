@@ -8,6 +8,7 @@ Supports Polish (PL) and English (EN) languages.
 import asyncio
 import logging
 import tempfile
+from urllib.parse import urljoin
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -1160,7 +1161,54 @@ _last_report_html = None
 _last_report_only_cited = None
 
 
-def export_report(lang_code: str, export_format: str, only_cited_sources: bool):
+def _build_download_url(filename: str, request: gr.Request | None) -> str:
+    logger = logging.getLogger(__name__)
+    if request:
+        try:
+            scope = getattr(request, "scope", {}) or {}
+            root_path = scope.get("root_path")
+            url = getattr(request, "url", None)
+            logger.debug(
+                "Download URL request_url=%s root_path=%s filename=%s",
+                url,
+                root_path,
+                filename,
+            )
+        except Exception:
+            logger.debug("Download URL request_url unavailable, filename=%s", filename)
+        base_url = getattr(request, "base_url", None)
+        if base_url:
+            logger.debug("Download URL base_url=%s filename=%s", base_url, filename)
+            return urljoin(str(base_url), f"download-report/{filename}")
+        headers = dict(request.headers) if request.headers else {}
+        proto = headers.get("x-forwarded-proto") or headers.get("x-scheme")
+        host = headers.get("x-forwarded-host") or headers.get("host")
+        if proto and host:
+            logger.debug(
+                "Download URL forwarded proto=%s host=%s filename=%s",
+                proto,
+                host,
+                filename,
+            )
+            return f"{proto}://{host}/download-report/{filename}"
+        filtered_headers = {
+            key: headers.get(key)
+            for key in ("host", "x-forwarded-host", "x-forwarded-proto", "x-scheme")
+            if headers.get(key) is not None
+        }
+        logger.warning(
+            "Download URL fallback to relative path, headers=%s",
+            filtered_headers,
+        )
+    return f"/download-report/{filename}"
+
+
+def export_report(
+    lang_code: str,
+    export_format: str,
+    only_cited_sources: bool,
+    request: gr.Request | None = None,
+):
     """Export report to HTML or PDF file."""
     global _last_report_html, _last_report_only_cited
     global _last_report_analysis, _last_report_analysis_key
@@ -1259,7 +1307,7 @@ def export_report(lang_code: str, export_format: str, only_cited_sources: bool):
         logger.info(f"Report exported to: {output_path} | exists={output_path.exists()}")
         
         # Return download URL as HTML link (bypasses Gradio file handling bug)
-        download_url = f"/download-report/{output_path.name}"
+        download_url = _build_download_url(output_path.name, request)
         download_link = f'<a href="{download_url}" download="{output_path.name}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:white;text-decoration:none;border-radius:6px;font-weight:bold;">📥 Download {output_path.name}</a>'
         if lang == Language.EN:
             return download_link, f"✅ Ready to download"
@@ -1525,7 +1573,11 @@ def run_focus_group(*args):
     return result
 
 
-def export_focus_group(lang_code: str, export_format: str) -> tuple[str | None, str]:
+def export_focus_group(
+    lang_code: str,
+    export_format: str,
+    request: gr.Request | None = None,
+) -> tuple[str | None, str]:
     """Export focus group results to HTML or PDF file."""
     global _last_fg_transcript, _last_fg_summary, _last_fg_product
     lang = get_lang(lang_code)
@@ -1593,7 +1645,7 @@ def export_focus_group(lang_code: str, export_format: str) -> tuple[str | None, 
             f.write(html_content)
     
     # Return download URL as HTML link (bypasses Gradio file handling bug)
-    download_url = f"/download-report/{filepath.name}"
+    download_url = _build_download_url(filepath.name, request)
     download_link = f'<a href="{download_url}" download="{filepath.name}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:white;text-decoration:none;border-radius:6px;font-weight:bold;">📥 Download {filepath.name}</a>'
     if lang == Language.EN:
         return download_link, f"✅ Ready to download"
@@ -3050,37 +3102,39 @@ def create_interface():
 if __name__ == "__main__":
     from fastapi import FastAPI, HTTPException
     from fastapi.responses import FileResponse
-    from starlette.routing import Route
-    
+
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
-    logger.info(f"System temp directory: {tempfile.gettempdir()}")
-    
+    logger.info("System temp directory: %s", tempfile.gettempdir())
+
     demo = create_interface()
-    app = demo.app  # Get underlying FastAPI/Starlette app
-    
+
+    app = FastAPI()
+
     # Add download endpoint that bypasses Gradio's file handling
     @app.get("/download-report/{filename}")
     async def download_report(filename: str):
         """Direct file download endpoint - bypasses Gradio 6.x file handling bug."""
         filepath = Path(tempfile.gettempdir()) / filename
         if not filepath.exists():
-            logger.error(f"Download failed - file not found: {filepath}")
+            logger.error("Download failed - file not found: %s", filepath)
             raise HTTPException(status_code=404, detail=f"File not found: {filename}")
-        
+
         # Determine media type based on extension
         media_type = "application/pdf" if filename.endswith(".pdf") else "text/html"
-        logger.info(f"Serving download: {filepath}")
+        logger.info("Serving download: %s", filepath)
         return FileResponse(
             path=str(filepath),
             filename=filename,
             media_type=media_type,
         )
-    
+
     logger.info("Download endpoint registered at /download-report/{filename}")
-    
-    demo.launch(
-        server_name="0.0.0.0",
-        server_port=7860,
-        share=False,
-    )
+
+    # Mount Gradio app on the FastAPI app
+    app = gr.mount_gradio_app(app, demo, path="/")
+    logger.info("Gradio app mounted on FastAPI at path '/'")
+
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=7860, log_level="info")
