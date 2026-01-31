@@ -9,7 +9,7 @@ import asyncio
 import logging
 import os
 import tempfile
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, parse_qsl, urlencode, urlunparse
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -1164,6 +1164,14 @@ _last_report_only_cited = None
 
 def _build_download_url(filename: str, request: gr.Request | None) -> str:
     logger = logging.getLogger(__name__)
+    sign_token: str | None = None
+    if request:
+        try:
+            params = getattr(request, "query_params", None)
+            if params is not None:
+                sign_token = params.get("__sign")
+        except Exception:
+            sign_token = None
     external_base_url = os.getenv("MARKET_WIZARD_EXTERNAL_BASE_URL")
     if external_base_url:
         logger.info(
@@ -1171,7 +1179,14 @@ def _build_download_url(filename: str, request: gr.Request | None) -> str:
             external_base_url,
             filename,
         )
-        return urljoin(external_base_url.rstrip("/") + "/", f"download-report/{filename}")
+        base = urljoin(external_base_url.rstrip("/") + "/", f"download-report/{filename}")
+        if sign_token:
+            parsed = urlparse(base)
+            query = dict(parse_qsl(parsed.query))
+            query.setdefault("__sign", sign_token)
+            base = urlunparse(parsed._replace(query=urlencode(query)))
+            logger.info("Download URL appended __sign token (override)")
+        return base
     if request:
         try:
             scope = getattr(request, "scope", {}) or {}
@@ -1188,7 +1203,14 @@ def _build_download_url(filename: str, request: gr.Request | None) -> str:
         base_url = getattr(request, "base_url", None)
         if base_url:
             logger.debug("Download URL base_url=%s filename=%s", base_url, filename)
-            return urljoin(str(base_url), f"download-report/{filename}")
+            base = urljoin(str(base_url), f"download-report/{filename}")
+            if sign_token:
+                parsed = urlparse(base)
+                query = dict(parse_qsl(parsed.query))
+                query.setdefault("__sign", sign_token)
+                base = urlunparse(parsed._replace(query=urlencode(query)))
+                logger.info("Download URL appended __sign token (base_url)")
+            return base
         headers = dict(request.headers) if request.headers else {}
         proto = headers.get("x-forwarded-proto") or headers.get("x-scheme")
         host = headers.get("x-forwarded-host") or headers.get("host")
@@ -1199,7 +1221,14 @@ def _build_download_url(filename: str, request: gr.Request | None) -> str:
                 host,
                 filename,
             )
-            return f"{proto}://{host}/download-report/{filename}"
+            base = f"{proto}://{host}/download-report/{filename}"
+            if sign_token:
+                parsed = urlparse(base)
+                query = dict(parse_qsl(parsed.query))
+                query.setdefault("__sign", sign_token)
+                base = urlunparse(parsed._replace(query=urlencode(query)))
+                logger.info("Download URL appended __sign token (forwarded)")
+            return base
         filtered_headers = {
             key: headers.get(key)
             for key in ("host", "x-forwarded-host", "x-forwarded-proto", "x-scheme")
@@ -1209,7 +1238,14 @@ def _build_download_url(filename: str, request: gr.Request | None) -> str:
             "Download URL fallback to relative path, headers=%s",
             filtered_headers,
         )
-    return f"/download-report/{filename}"
+    base = f"/download-report/{filename}"
+    if sign_token:
+        parsed = urlparse(base)
+        query = dict(parse_qsl(parsed.query))
+        query.setdefault("__sign", sign_token)
+        base = urlunparse(parsed._replace(query=urlencode(query)))
+        logger.info("Download URL appended __sign token (relative)")
+    return base
 
 
 def export_report(
