@@ -1,3 +1,35 @@
+v0.4.0 (2026-01-31)
+- Integrated GUS 2024 data for Income Levels: 5 new categories (Very Low to Very High) based on official decile/quintile net income ranges.
+- Integrated GUS 2024 data for Location/Urbanization: 5 new categories (Rural, Small City, Medium City, Large City, Metropolis) with accurate population weights (~41% rural, ~13% metropolis).
+- Updated "Gender" dropdown in Polish interface to use "K" (Kobieta) instead of "F".
+- Added `test_personas.py` to verify statistical distribution of occupations, incomes, and locations against GUS benchmarks.
+- Refined backend logic to use new granular location and income data for more realistic persona generation.
+
+v0.3.7 (2026-01-31)
+- Finalized HF download fix by caching exports in Gradio's cache and returning the cached files via `gr.File`, letting Gradio itself serve `/file=...`.
+- Removed custom `/download-report` route in favor of Gradio's native file serving, which avoids HF proxy restrictions.
+- Clarified session notes and logs to document the resolved flow (cache copy + __sign handling).
+
+v0.3.6 (2026-01-31)
+- Fixed download endpoint routing by mounting Gradio into FastAPI and serving files via a dedicated `/download-report/{filename}` route.
+- Export links now use request-aware absolute URLs (base_url / forwarded headers) to play nicely with proxies.
+- Added targeted logging around download URL construction and Gradio mount for easier HF debugging.
+
+v0.3.5 (2026-01-31)
+- Fixed Hugging Face deployment: Added missing system dependencies (Pango, Cairo, etc.) and Python packages (WeasyPrint, Pandas, pytz).
+- Enabled full Playwright support in Docker (Chromium + system dependencies).
+- Fixed "File wasn't available on site" error on Hugging Face by relocating report exports to a local 'reports/' directory and configuring Gradio 'allowed_paths'.
+- Updated local setup (run.sh) to automatically handle Playwright browser installation.
+- Added logging and write permission handling (chmod 777) for persistent report storage on server.
+- Synced GitHub (origin) and Hugging Face (hf) repositories for consistent deployment.
+
+v0.3.0 (2026-01-30)
+- Overhauled report analysis prompts (PL/EN) for deeper, literal, data-anchored insights and enforced suffixes on recommendations.
+- Increased default report analysis max output tokens to 16384.
+- Added sanitize pass using the same model to neutralize style and remove storytelling artifacts.
+- Enforced recommendation suffixes server-side with automatic validation.
+- Added report analysis sanitize cache refresh (v3) in frontend pipeline.
+
 v0.2.0 (2026-01-30)
 - Added narrative analysis sections to reports (narrative, agent response summary, sales/marketing recommendations).
 - Report analysis now uses Gemini 3 Pro Preview with explicit thinking budget configuration.
@@ -11,28 +43,3 @@ v0.2.0 (2026-01-30)
 - URL normalization now accepts www.* inputs and uses https:// automatically.
 - Reuse extracted URL data across simulation, price analysis, and focus group without re-fetching.
 - Persist extracted URL data in projects and reload on project load.
-
-v0.3.0 (2026-01-30)
-- Overhauled report analysis prompts (PL/EN) for deeper, literal, data-anchored insights and enforced suffixes on recommendations.
-- Increased default report analysis max output tokens to 16384.
-- Added sanitize pass using the same model to neutralize style and remove storytelling artifacts.
-- Enforced recommendation suffixes server-side with automatic validation.
-- Added report analysis sanitize cache refresh (v3) in frontend pipeline.
-
-v0.3.5 (2026-01-31)
-- Fixed Hugging Face deployment: Added missing system dependencies (Pango, Cairo, etc.) and Python packages (WeasyPrint, Pandas, pytz).
-- Enabled full Playwright support in Docker (Chromium + system dependencies).
-- Fixed "File wasn't available on site" error on Hugging Face by relocating report exports to a local 'reports/' directory and configuring Gradio 'allowed_paths'.
-- Updated local setup (run.sh) to automatically handle Playwright browser installation.
-- Added logging and write permission handling (chmod 777) for persistent report storage on server.
-- Synced GitHub (origin) and Hugging Face (hf) repositories for consistent deployment.
-
-v0.3.6 (2026-01-31)
-- Fixed download endpoint routing by mounting Gradio into FastAPI and serving files via a dedicated `/download-report/{filename}` route.
-- Export links now use request-aware absolute URLs (base_url / forwarded headers) to play nicely with proxies.
-- Added targeted logging around download URL construction and Gradio mount for easier HF debugging.
-
-v0.3.7 (2026-01-31)
-- Finalized HF download fix by caching exports in Gradio's cache and returning the cached files via `gr.File`, letting Gradio itself serve `/file=...`.
-- Removed custom `/download-report` route in favor of Gradio's native file serving, which avoids HF proxy restrictions.
-- Clarified session notes and logs to document the resolved flow (cache copy + __sign handling).

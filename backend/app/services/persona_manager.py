@@ -18,19 +18,40 @@ import httpx
 from app.config import get_settings
 from app.models import DemographicProfile, Persona
 from app.i18n import Language, FIRST_NAMES, LOCATIONS, OCCUPATIONS
+from app.data.reference_data import (
+    OCCUPATION_INCOME_DATA,
+    OCCUPATION_POPULATION_WEIGHTS,
+    REGIONAL_WAGE_INDEX,
+    GENDER_WAGE_GAP,
+    LOCATION_WAGE_INDEX,
+    LOCATION_POPULATION_WEIGHTS,
+    PENSION_BY_GENDER,
+    CITY_TO_REGION,
+    get_regional_multiplier,
+    get_gender_distribution_for_age,
+)
 
-
-# Income distribution by level (PLN/month for PL, $/month for EN)
+# =============================================================================
+# Income distribution by level (PLN netto/month for PL)
+# Based on GUS "Rozkład wynagrodzeń w gospodarce narodowej" grudzień 2024
+# Decyl 1: do 4242 brutto (~3080 netto)
+# Mediana: 7267 brutto (~5280 netto)
+# Decyl 9: od 12500 brutto (~9100 netto)
+# =============================================================================
 INCOME_RANGES = {
     Language.PL: {
-        "low": (2000, 4000),
-        "medium": (4000, 8000),
-        "high": (8000, 20000),
+        "very_low": (1500, 3500),   # Dolny kwintyl - do 3500 netto
+        "low": (3500, 5000),         # Poniżej mediany
+        "medium": (5000, 7000),      # Około mediany (5280)
+        "high": (7000, 10000),       # Powyżej mediany
+        "very_high": (10000, 25000), # Górny kwintyl - top earners
     },
     Language.EN: {
-        "low": (2000, 3500),
-        "medium": (3500, 7000),
-        "high": (7000, 15000),
+        "very_low": (1500, 3500),
+        "low": (3500, 5000),
+        "medium": (5000, 7000),
+        "high": (7000, 10000),
+        "very_high": (10000, 25000),
     },
 }
 
@@ -73,12 +94,8 @@ class GUSClient:
         "75+": {"mean": 2800, "std": 600},
     }
     
-    # Location distribution based on GUS data
-    LOCATION_DISTRIBUTION = {
-        "urban": 0.60,      # 60% in cities
-        "suburban": 0.22,   # 22% in suburban areas
-        "rural": 0.18,      # 18% in rural areas
-    }
+    # Location distribution based on GUS 2024 data (fallback)
+    LOCATION_DISTRIBUTION = LOCATION_POPULATION_WEIGHTS
     
     # Gender distribution (approximate 51.5% F, 48.5% M in Poland)
     GENDER_DISTRIBUTION = {"M": 0.485, "F": 0.515}
@@ -459,14 +476,34 @@ class GUSClient:
         
         return random.randint(min_age, max_age)
     
-    def sample_gender(self) -> str:
-        """Sample gender based on population distribution."""
+    def sample_gender(self, age: int | None = None) -> str:
+        """
+        Sample gender based on age-dependent population distribution.
+        
+        Uses GUS 2024 demographic data - women live longer, so gender
+        distribution changes with age (e.g., 80+: 30% M, 70% F).
+        
+        Args:
+            age: Person's age. If None, uses average distribution.
+        """
         self._ensure_live_loaded()
+        
+        # If age provided, use age-specific distribution from reference data
+        if age is not None:
+            gender_dist = get_gender_distribution_for_age(age)
+            return random.choices(
+                list(gender_dist.keys()),
+                weights=list(gender_dist.values()),
+            )[0]
+        
+        # Fallback: use live GUS data if available
         if self._live_gender_distribution:
             return random.choices(
                 list(self._live_gender_distribution.keys()),
                 weights=list(self._live_gender_distribution.values()),
             )[0]
+        
+        # Default average distribution
         return random.choices(
             list(self.GENDER_DISTRIBUTION.keys()),
             weights=list(self.GENDER_DISTRIBUTION.values())
@@ -532,13 +569,7 @@ class PersonaManager:
         lang = self.language
         gus = self.gus_client
         
-        # Determine gender (use GUS distribution if not specified)
-        if profile.gender:
-            gender = profile.gender
-        else:
-            gender = gus.sample_gender()
-
-        # Determine age (use GUS distribution, but respect constraints)
+        # IMPORTANT: Determine age FIRST (needed for gender distribution)
         if profile.age_min != 18 or profile.age_max != 80:
             # Custom age range specified
             age = random.randint(profile.age_min, profile.age_max)
@@ -546,6 +577,12 @@ class PersonaManager:
             age = gus.sample_age()
             # Clamp to profile constraints
             age = max(profile.age_min, min(profile.age_max, age))
+
+        # Determine gender based on age (women live longer - GUS 2024)
+        if profile.gender:
+            gender = profile.gender
+        else:
+            gender = gus.sample_gender(age)  # Age-dependent distribution
 
         # Determine location type (use GUS urbanization stats if not specified)
         if profile.location_type:
@@ -556,19 +593,22 @@ class PersonaManager:
         # Get location from i18n data
         location = random.choice(LOCATIONS[lang][location_type])
 
-        # Determine income using GUS wage statistics
+        # Select occupation appropriate for age (using population weights)
+        occupation_data = self._select_occupation_for_age(age, gender)
+        occupation = occupation_data["name"]
+
+        # Determine income based on occupation and experience
         if profile.income_level:
             income_ranges = INCOME_RANGES[lang]
             income_range = income_ranges[profile.income_level]
             income = random.randint(income_range[0], income_range[1])
         else:
-            # Use GUS-based income that correlates with age
-            income = gus.get_income_for_age(age)
+            # Use GUS 2024 based income with all modifiers
+            income = self._calculate_income(age, occupation_data, gender, location_type, location)
 
-        # Generate name, education, occupation from i18n data
+        # Generate name, education from i18n data
         name = random.choice(FIRST_NAMES[lang][gender])
         education = random.choice(EDUCATION_LEVELS[lang])
-        occupation = random.choice(OCCUPATIONS[lang])
 
         return Persona(
             name=f"{name}_{index}",
@@ -589,45 +629,48 @@ class PersonaManager:
         """Generate persona using random sampling (for non-PL or when GUS disabled)."""
         lang = self.language
 
-        # Determine gender
+        # IMPORTANT: Determine age FIRST (needed for gender distribution)
+        age = random.randint(profile.age_min, profile.age_max)
+
+        # Determine gender based on age (women live longer - GUS 2024)
         if profile.gender:
             gender = profile.gender
         else:
-            gender = random.choice(["M", "F"])
-
-        # Determine age
-        age = random.randint(profile.age_min, profile.age_max)
+            gender_dist = get_gender_distribution_for_age(age)
+            gender = random.choices(
+                list(gender_dist.keys()),
+                weights=list(gender_dist.values()),
+            )[0]
 
         # Determine location type
         if profile.location_type:
             location_type = profile.location_type
         else:
+            # Use diverse distribution for random generation
             location_type = random.choices(
-                ["urban", "suburban", "rural"],
-                weights=[0.6, 0.25, 0.15],
+                ["metropolis", "large_city", "medium_city", "small_city", "rural"],
+                weights=[0.15, 0.20, 0.20, 0.20, 0.25],
             )[0]
 
         # Determine location
         location = random.choice(LOCATIONS[lang][location_type])
 
-        # Determine income
-        income_ranges = INCOME_RANGES[lang]
+        # Select occupation appropriate for age (using population weights)
+        occupation_data = self._select_occupation_for_age(age, gender)
+        occupation = occupation_data["name"]
+
+        # Determine income based on occupation and experience
         if profile.income_level:
+            income_ranges = INCOME_RANGES[lang]
             income_range = income_ranges[profile.income_level]
+            income = random.randint(income_range[0], income_range[1])
         else:
-            if age < 25:
-                income_range = income_ranges["low"]
-            elif location_type == "urban" and age > 30:
-                income_range = random.choice([income_ranges["medium"], income_ranges["high"]])
-            else:
-                income_range = income_ranges["medium"]
+            # Use GUS 2024 based income with all modifiers
+            income = self._calculate_income(age, occupation_data, gender, location_type, location)
 
-        income = random.randint(income_range[0], income_range[1])
-
-        # Generate name, education, occupation
+        # Generate name, education
         name = random.choice(FIRST_NAMES[lang][gender])
         education = random.choice(EDUCATION_LEVELS[lang])
-        occupation = random.choice(OCCUPATIONS[lang])
 
         return Persona(
             name=f"{name}_{index}",
@@ -639,6 +682,153 @@ class PersonaManager:
             education=education,
             occupation=occupation,
         )
+
+    def _select_occupation_for_age(self, age: int, gender: str = "M") -> dict:
+        """
+        Select a realistic occupation based on agent's age using population weights.
+        
+        Uses GUS BAEL 2024 occupation distribution data to select occupations
+        with realistic frequency (e.g., more salespeople than doctors).
+        
+        Source: GUS BAEL 2024, ISCO-08 occupation groups
+        """
+        lang = self.language
+        valid_occupations = []
+        weights = []
+        
+        for occ in OCCUPATIONS[lang]:
+            min_age = occ.get("min_age", 18)
+            max_age = occ.get("max_age", 100)
+            if min_age <= age <= max_age:
+                occ_name = occ.get("name", "")
+                
+                # Get population weight from reference data
+                weight = OCCUPATION_POPULATION_WEIGHTS.get(occ_name, 0.01)
+                
+                # Special handling for age-dependent statuses
+                if occ_name == "student" and 18 <= age <= 27:
+                    # Students are common in 18-27 age group
+                    weight = 0.30 if age <= 24 else 0.10
+                elif occ_name == "emeryt":
+                    # Retirees become more common with age
+                    if age >= 75:
+                        weight = 0.90
+                    elif age >= 70:
+                        weight = 0.75
+                    elif age >= 65:
+                        weight = 0.50
+                    elif age >= 60:
+                        weight = 0.20
+                    else:
+                        weight = 0.0
+                elif occ_name == "rencista":
+                    weight = 0.02  # ~2% of 35+ population
+                
+                valid_occupations.append(occ)
+                weights.append(weight)
+        
+        if not valid_occupations:
+            # Fallback to generic occupation
+            if lang == Language.PL:
+                return {"name": "pracownik", "min_age": 18, "max_age": 100, "income_min": 3000, "income_max": 6000}
+            else:
+                return {"name": "worker", "min_age": 18, "max_age": 100, "income_min": 3000, "income_max": 6000}
+        
+        # Normalize weights and select
+        total_weight = sum(weights) or 1.0
+        normalized_weights = [w / total_weight for w in weights]
+        
+        return random.choices(valid_occupations, weights=normalized_weights)[0]
+
+    def _calculate_income(
+        self, 
+        age: int, 
+        occupation: dict, 
+        gender: str = "M",
+        location_type: str = "urban",
+        location: str | None = None
+    ) -> int:
+        """
+        Calculate realistic income using GUS 2024 data with modifiers.
+        
+        Factors applied:
+        - Occupation base (from OCCUPATION_INCOME_DATA or fallback)
+        - Experience factor (age - min_age progression)
+        - Gender gap (GUS 2024: ~17% difference)
+        - Regional factor (Mazowieckie +16%, Podkarpackie -14%)
+        - Location type (urban +8%, rural -12%)
+        
+        Sources: GUS Struktura wynagrodzeń 2024, Sedlak & Sedlak 2024
+        """
+        occ_name = occupation.get("name", "")
+        
+        # Get income data from reference data (verified GUS 2024)
+        if occ_name in OCCUPATION_INCOME_DATA:
+            income_data = OCCUPATION_INCOME_DATA[occ_name]
+            median = income_data.get("median", 5000)
+            p25 = income_data.get("p25", median * 0.7)
+            p75 = income_data.get("p75", median * 1.4)
+            min_age = income_data.get("min_age", occupation.get("min_age", 18))
+        else:
+            # Fallback to occupation dict (i18n.py data)
+            income_min = occupation.get("income_min", 3000)
+            income_max = occupation.get("income_max", 8000)
+            median = (income_min + income_max) / 2
+            p25 = income_min
+            p75 = income_max
+            min_age = occupation.get("min_age", 18)
+        
+        # Special case: pensioners and disability pensioners
+        # Note: PENSION_BY_GENDER data is already in netto (ZUS 2024)
+        if occ_name in ("emeryt", "retiree"):
+            pension_data = PENSION_BY_GENDER.get(gender, {"median": 3000, "std": 800})
+            pension_netto = random.gauss(pension_data["median"], pension_data["std"])
+            # Older retirees often have lower pensions
+            if age > 75:
+                pension_netto *= 0.92
+            return int(round(max(1500, pension_netto), -2))
+        
+        if occ_name in ("rencista", "disability pensioner"):
+            # Disability pension is lower than regular pension (netto)
+            base_pension = random.gauss(2000, 400)
+            return int(round(max(1500, base_pension), -2))
+        
+        # Experience factor (0.0 at career start, 1.0 at peak ~20 years)
+        career_years = max(0, age - min_age)
+        peak_years = 20
+        experience_factor = min(1.0, career_years / peak_years)
+        
+        # After peak (age ~55+), slight decline
+        if age > 55:
+            experience_factor *= max(0.88, 1.0 - (age - 55) * 0.012)
+        
+        # Calculate base income based on experience
+        # Early career: closer to p25, peak career: closer to p75
+        base_income = p25 + (p75 - p25) * experience_factor
+        
+        # Apply modifiers
+        # 1. Gender gap (GUS 2024: men +8.5%, women -8.5% vs median)
+        gender_factor = GENDER_WAGE_GAP.get(gender, 1.0)
+        
+        # 2. Location type factor
+        location_factor = LOCATION_WAGE_INDEX.get(location_type, 1.0)
+        
+        # 3. Regional factor (if location is a known city)
+        regional_factor = 1.0
+        if location:
+            regional_factor = get_regional_multiplier(location, None)
+        
+        # Combine factors
+        final_income = base_income * gender_factor * location_factor * regional_factor
+        
+        # Add random variation (±10%)
+        variation = random.uniform(-0.10, 0.10)
+        final_income *= (1 + variation)
+        
+        # Ensure minimum realistic income (national minimum wage netto ~3000 PLN)
+        final_income = max(p25 * 0.85, final_income)
+        
+        return int(round(final_income, -2))  # Round to nearest 100
 
     def generate_population(
         self,

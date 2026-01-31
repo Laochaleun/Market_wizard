@@ -177,6 +177,95 @@ Dla research (źródła i interpretacja):
 - `RESEARCH_LLM_MODEL` (grounding) domyślnie `gemini-2.5-flash-lite`
 - `RESEARCH_INTERPRETATION_MODEL` (interpretacja danych) domyślnie `gemini-3-flash-preview`
 
+## 👥 Generowanie populacji
+
+System generuje realistyczne persony syntetycznych konsumentów na podstawie oficjalnych danych statystycznych.
+
+### Źródła danych (styczeń 2026)
+
+| Źródło | Dane | Rok |
+|--------|------|-----|
+| GUS Struktura wynagrodzeń | Zarobki według zawodów, regionów | 2024 |
+| GUS BAEL | Struktura zatrudnienia według grup ISCO-08 | 2024 |
+| ZUS | Emerytury według płci | 2024 |
+| Sedlak & Sedlak | Mediany wynagrodzeń dla zawodów | 2024 |
+
+### Jak działa generowanie person?
+
+Każda persona ma przypisane:
+- **Wiek** (18-80 lat) - rozkład oparty na demografii Polski
+- **Płeć** (M/F) - rozkład 48%/52%
+- **Zawód** - wybierany z wagami populacyjnymi (GUS BAEL)
+- **Dochód netto** - obliczany na podstawie zawodu z modyfikatorami
+- **Lokalizacja** - miasto/wieś z wpływem na dochód
+
+### Wagi populacyjne zawodów
+
+System nie wybiera zawodów losowo - używa wag opartych na strukturze zatrudnienia:
+
+| Zawód | Udział w populacji | Źródło |
+|-------|-------------------|--------|
+| Pracownik biurowy | ~10% | GUS BAEL ISCO-4 |
+| Sprzedawca | ~8% | GUS BAEL ISCO-5 |
+| Kierowca | ~5% | GUS BAEL ISCO-8 |
+| Programista | ~4% | GUS BAEL ISCO-2 |
+| Lekarz | ~1.2% | GUS BAEL |
+| Dentysta | ~0.3% | GUS BAEL |
+
+### Obliczanie dochodu netto
+
+Dochód jest obliczany z uwzględnieniem wielu czynników:
+
+```
+dochód = dochód_bazowy × współczynnik_doświadczenia 
+         × współczynnik_płci × współczynnik_regionu 
+         × współczynnik_lokalizacji ± wariacja
+```
+
+| Modyfikator | Zakres | Źródło |
+|-------------|--------|--------|
+| Doświadczenie | 0.0 → 1.0 (20 lat) | Model |
+| Płeć | M: +8.5%, F: -8.5% | GUS 2024 |
+| Region | Mazowieckie +16%, Podkarpackie -14% | GUS 2024 |
+| Lokalizacja | miasto +8%, wieś -12% | GUS BAEL |
+
+### Tryb offline (gdy GUS API niedostępne)
+
+Gdy API GUS jest niedostępne (błąd 403, timeout, brak klucza), system używa **wbudowanych danych referencyjnych** z pliku `backend/app/data/reference_data.py`:
+
+```python
+# Przykładowe dane wbudowane
+REGIONAL_WAGE_INDEX = {
+    "mazowieckie": 1.16,  # +16%
+    "podkarpackie": 0.86, # -14%
+    # ... 16 województw
+}
+
+PENSION_BY_GENDER = {
+    "M": {"median": 3975, "std": 1000},  # netto
+    "F": {"median": 2730, "std": 750},   # netto
+}
+
+OCCUPATION_INCOME_DATA = {
+    "programista": {"median": 9000, "p25": 5500, "p75": 16000},
+    "sprzedawca": {"median": 3200, "p25": 2800, "p75": 4200},
+    # ... wszystkie zawody
+}
+```
+
+> **Uwaga:** Wszystkie kwoty w systemie są w **PLN netto miesięcznie**.
+
+### Aktualizacja danych
+
+Dane referencyjne znajdują się w:
+- `backend/app/data/reference_data.py` - współczynniki i zarobki
+- `backend/app/i18n.py` - lista zawodów z zakresami wiekowymi
+
+Aby zaktualizować dane po publikacji nowych raportów GUS:
+1. Edytuj `reference_data.py`
+2. Zaktualizuj komentarze ze źródłami
+3. Uruchom testy: `python scripts/test_personas.py`
+
 ## 📚 Metodologia SSR
 
 Oparta na badaniu: **Maier, B.F., et al. (2025).** *"LLMs Reproduce Human Purchase Intent via Semantic Similarity Elicitation of Likert Ratings"* [arXiv:2510.08338](https://arxiv.org/abs/2510.08338)

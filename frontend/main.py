@@ -343,9 +343,23 @@ def build_project_info(project: dict, lang: Language) -> str:
     location_type = audience.get("location_type")
 
     if lang == Language.PL:
-        gender_label = "Wszystkie" if not gender else gender
-        income_map = {"low": "Niski", "medium": "Średni", "high": "Wysoki"}
-        location_map = {"urban": "Miasto", "suburban": "Przedmieścia", "rural": "Wieś"}
+        gender_label = "Wszystkie" if not gender else ("K" if gender == "F" else gender)
+        income_map = {
+            "very_low": "Najniższy (do 3500 PLN)",
+            "low": "Niski (3500-5000 PLN)",
+            "medium": "Średni (5000-7000 PLN)",
+            "high": "Wysoki (7000-10000 PLN)",
+            "very_high": "Najwyższy (10000+ PLN)",
+        }
+        location_map = {
+            "rural": "Wieś",
+            "small_city": "Małe miasto",
+            "medium_city": "Średnie miasto",
+            "large_city": "Duże miasto",
+            "metropolis": "Metropolia",
+            "urban": "Miasto",
+            "suburban": "Przedmieścia",
+        }
         income_label = income_map.get(income_level, "Wszystkie")
         location_label = location_map.get(location_type, "Wszystkie")
         age_label = f"{audience.get('age_min', '-')}-{audience.get('age_max', '-')}"
@@ -371,8 +385,22 @@ def build_project_info(project: dict, lang: Language) -> str:
         )
 
     gender_label = "All" if not gender else gender
-    income_map = {"low": "Low", "medium": "Medium", "high": "High"}
-    location_map = {"urban": "Urban", "suburban": "Suburban", "rural": "Rural"}
+    income_map = {
+        "very_low": "Very Low (up to 3500 PLN)",
+        "low": "Low (3500-5000 PLN)",
+        "medium": "Medium (5000-7000 PLN)",
+        "high": "High (7000-10000 PLN)",
+        "very_high": "Very High (10000+ PLN)",
+    }
+    location_map = {
+        "rural": "Rural",
+        "small_city": "Small city",
+        "medium_city": "Medium city",
+        "large_city": "Large city",
+        "metropolis": "Metropolis",
+        "urban": "Urban",
+        "suburban": "Suburban",
+    }
     income_label = income_map.get(income_level, "All")
     location_label = location_map.get(location_type, "All")
     age_label = f"{audience.get('age_min', '-')}-{audience.get('age_max', '-')}"
@@ -501,19 +529,35 @@ def normalize_target_audience(
     """Normalize UI inputs to stored demographic fields."""
     all_values = {"All", "Wszystkie"}
     income_map = {
+        # New GUS-based categories with ranges
+        "Najniższy (do 3500 PLN)": "very_low",
+        "Niski (3500-5000 PLN)": "low",
+        "Średni (5000-7000 PLN)": "medium",
+        "Wysoki (7000-10000 PLN)": "high",
+        "Najwyższy (10000+ PLN)": "very_high",
+        # Legacy mappings for backwards compatibility
+        "Very Low": "very_low",
         "Low": "low",
         "Medium": "medium",
         "High": "high",
+        "Very High": "very_high",
         "Niski": "low",
         "Średni": "medium",
         "Wysoki": "high",
     }
     location_map = {
-        "Urban": "urban",
-        "Suburban": "suburban",
+        # New GUS 2024 categories with population percentages
+        "Wieś (41% populacji)": "rural",
+        "Małe miasto do 20 tys. (12%)": "small_city",
+        "Średnie miasto 20-100 tys. (18%)": "medium_city",
+        "Duże miasto 100-500 tys. (16%)": "large_city",
+        "Metropolia 500 tys.+ (13%)": "metropolis",
+        # Legacy mappings for backwards compatibility
+        "Urban": "large_city",
+        "Suburban": "medium_city",
         "Rural": "rural",
-        "Miasto": "urban",
-        "Przedmieścia": "suburban",
+        "Miasto": "large_city",
+        "Przedmieścia": "medium_city",
         "Wieś": "rural",
     }
 
@@ -522,6 +566,8 @@ def normalize_target_audience(
 
     if gender in ["M", "F"]:
         gender_value = gender
+    elif gender == "K":
+        gender_value = "F"
     elif gender in all_values:
         gender_value = None
     else:
@@ -655,8 +701,25 @@ def target_audience_to_ui(
     default_gender = "Wszystkie"
     default_income = "Wszystkie"
     default_location = "Wszystkie"
-    income_map = {"low": "Niski", "medium": "Średni", "high": "Wysoki"}
-    location_map = {"urban": "Miasto", "suburban": "Przedmieścia", "rural": "Wieś"}
+    # GUS 2024-based income categories with PLN ranges
+    income_map = {
+        "very_low": "Najniższy (do 3500 PLN)",
+        "low": "Niski (3500-5000 PLN)",
+        "medium": "Średni (5000-7000 PLN)",
+        "high": "Wysoki (7000-10000 PLN)",
+        "very_high": "Najwyższy (10000+ PLN)",
+    }
+    # GUS 2024-based location categories
+    location_map = {
+        "rural": "Wieś (41% populacji)",
+        "small_city": "Małe miasto do 20 tys. (12%)",
+        "medium_city": "Średnie miasto 20-100 tys. (18%)",
+        "large_city": "Duże miasto 100-500 tys. (16%)",
+        "metropolis": "Metropolia 500 tys.+ (13%)",
+        # Legacy support
+        "urban": "Duże miasto 100-500 tys. (16%)",
+        "suburban": "Średnie miasto 20-100 tys. (18%)",
+    }
 
     if not target_audience:
         return (
@@ -671,8 +734,10 @@ def target_audience_to_ui(
     age_max = int(target_audience.get("age_max", default_age_max))
 
     gender_raw = target_audience.get("gender")
-    if gender_raw in ["M", "F"]:
-        gender = gender_raw
+    if gender_raw == "F":
+        gender = "K"
+    elif gender_raw == "M":
+        gender = "M"
     else:
         gender = default_gender
 
@@ -943,14 +1008,33 @@ async def run_simulation_async(
         # Handle language-specific "All" values
         all_value = "All" if lang == Language.EN else "Wszystkie"
         
-        # Map income level
-        income_map = {"Low": "low", "Medium": "medium", "High": "high", 
-                      "Niski": "low", "Średni": "medium", "Wysoki": "high"}
+        # Map income level - GUS 2024 based categories
+        income_map = {
+            # New GUS-based categories with ranges
+            "Najniższy (do 3500 PLN)": "very_low",
+            "Niski (3500-5000 PLN)": "low",
+            "Średni (5000-7000 PLN)": "medium",
+            "Wysoki (7000-10000 PLN)": "high",
+            "Najwyższy (10000+ PLN)": "very_high",
+            # Legacy/English mappings
+            "Very Low": "very_low", "Low": "low", "Medium": "medium", 
+            "High": "high", "Very High": "very_high",
+            "Niski": "low", "Średni": "medium", "Wysoki": "high",
+        }
         income = income_map.get(income_level) if income_level != all_value else None
         
         # Map location type
-        loc_map = {"Urban": "urban", "Suburban": "suburban", "Rural": "rural",
-                   "Miasto": "urban", "Przedmieścia": "suburban", "Wieś": "rural"}
+        loc_map = {
+            # GUS 2024 categories
+            "Wieś (41% populacji)": "rural",
+            "Małe miasto do 20 tys. (12%)": "small_city",
+            "Średnie miasto 20-100 tys. (18%)": "medium_city",
+            "Duże miasto 100-500 tys. (16%)": "large_city",
+            "Metropolia 500 tys.+ (13%)": "metropolis",
+            # Legacy/English mappings
+            "Urban": "large_city", "Suburban": "medium_city", "Rural": "rural",
+            "Miasto": "large_city", "Przedmieścia": "medium_city", "Wieś": "rural",
+        }
         location = loc_map.get(location_type) if location_type != all_value else None
         
         # Build demographic profile
@@ -2349,19 +2433,33 @@ def create_interface():
 
                         with gr.Row():
                             gender = gr.Dropdown(
-                                choices=["Wszystkie", "M", "F"],
+                                choices=["Wszystkie", "M", "K"],
                                 value="Wszystkie",
                                 label="Gender / Płeć",
                             )
                             income = gr.Dropdown(
-                                choices=["Wszystkie", "Niski", "Średni", "Wysoki"],
+                                choices=[
+                                    "Wszystkie",
+                                    "Najniższy (do 3500 PLN)",
+                                    "Niski (3500-5000 PLN)",
+                                    "Średni (5000-7000 PLN)",
+                                    "Wysoki (7000-10000 PLN)",
+                                    "Najwyższy (10000+ PLN)",
+                                ],
                                 value="Wszystkie",
-                                label="Income / Dochód",
+                                label="Income / Dochód (netto)",
                             )
                             location = gr.Dropdown(
-                                choices=["Wszystkie", "Miasto", "Przedmieścia", "Wieś"],
+                                choices=[
+                                    "Wszystkie",
+                                    "Wieś (41% populacji)",
+                                    "Małe miasto do 20 tys. (12%)",
+                                    "Średnie miasto 20-100 tys. (18%)",
+                                    "Duże miasto 100-500 tys. (16%)",
+                                    "Metropolia 500 tys.+ (13%)",
+                                ],
                                 value="Wszystkie",
-                                label="Location / Lokalizacja",
+                                label="Lokalizacja / Location (GUS 2024)",
                             )
 
                         n_agents = gr.Slider(5, 100, value=20, step=5, label="Number of agents / Liczba agentów")

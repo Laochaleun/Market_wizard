@@ -144,50 +144,125 @@ FIRST_NAMES: Dict[Language, Dict[str, List[str]]] = {
 
 LOCATIONS: Dict[Language, Dict[str, List[str]]] = {
     Language.PL: {
-        "urban": [
-            "Warszawa", "Kraków", "Wrocław", "Poznań", "Łódź", "Gdańsk",
-            "Szczecin", "Lublin", "Katowice", "Białystok",
+        "metropolis": [
+            "Warszawa", "Kraków", "Łódź", "Wrocław", "Poznań",
         ],
-        "suburban": [
-            "Wieliczka", "Piaseczno", "Pruszków", "Legionowo", "Zabierzów",
-            "Marki", "Ząbki", "Sopot", "Rumia", "Reda",
+        "large_city": [
+            "Gdańsk", "Szczecin", "Bydgoszcz", "Lublin", "Białystok", "Katowice",
+            "Gdynia", "Częstochowa", "Radom", "Toruń", "Kielce", "Rzeszów",
+        ],
+        "medium_city": [
+            "Tychy", "Opole", "Gorzów Wielkopolski", "Płock", "Elbląg",
+            "Wałbrzych", "Włocławek", "Tarnów", "Chorzów", "Koszalin",
+            "Słupsk", "Legnica", "Suwałki", "Jelenia Góra", "Siedlce",
+        ],
+        "small_city": [
+            "Wieliczka", "Piaseczno", "Pruszków", "Ząbki", "Rumia",
+            "Zakopane", "Sopot", "Augustów", "Kołobrzeg", "Sandomierz",
+            "Ciechanów", "Kwidzyn", "Żywiec", "Nysa", "Bochnia",
         ],
         "rural": [
-            "wieś na Mazurach", "wieś w Wielkopolsce", "wieś na Podlasiu",
-            "wieś na Śląsku", "wieś w Małopolsce", "wieś na Kaszubach",
+            "wieś na Mazowszu", "wieś w Małopolsce", "wieś na Podkarpaciu",
+            "wieś na Śląsku", "wieś w Wielkopolsce", "wieś na Pomorzu",
+            "wieś na Warmii", "wieś na Podlasiu", "wieś w Świętokrzyskiem",
+            "wieś na Lubelszczyźnie", "wieś w Łódzkiem", "wieś na Dolnym Śląsku",
         ],
+        # Legacy fallback
+        "urban": ["Warszawa", "Kraków", "Gdańsk"],
+        "suburban": ["Piaseczno", "Sopot", "Wieliczka"],
     },
     Language.EN: {
-        "urban": [
+        "metropolis": [
             "New York", "Los Angeles", "Chicago", "Houston", "Phoenix",
-            "Philadelphia", "San Diego", "Dallas", "San Jose", "Austin",
         ],
-        "suburban": [
-            "Naperville", "Plano", "Irvine", "Frisco", "Cary",
-            "Chandler", "Gilbert", "Scottsdale", "Arlington", "Stamford",
+        "large_city": [
+            "Seattle", "Denver", "Boston", "Nashville", "Portland", "Las Vegas",
+        ],
+        "medium_city": [
+            "Salt Lake City", "Boise", "Tucson", "Fresno", "Spokane",
+        ],
+        "small_city": [
+            "Santa Fe", "Boulder", "Ann Arbor", "Asheville", "Key West",
         ],
         "rural": [
-            "a rural town in Montana", "a small town in Kansas",
-            "a farming community in Iowa", "a village in Vermont",
-            "a rural area in North Carolina", "a small town in Nebraska",
+            "rural Texas", "rural Ohio", "rural Iowa", "rural Oregon",
+            "rural Alabama", "rural Montana", "rural Vermont",
         ],
+        # Legacy fallback
+        "urban": ["New York", "Chicago"],
+        "suburban": ["Naperville", "Pasadena"],
     },
 }
 
-OCCUPATIONS: Dict[Language, List[str]] = {
+OCCUPATIONS: Dict[Language, List[Dict[str, any]]] = {
     Language.PL: [
-        "programista", "nauczyciel", "lekarz", "prawnik", "inżynier",
-        "sprzedawca", "kierowca", "pielęgniarka", "fryzjer", "kelner",
-        "mechanik", "elektryk", "księgowy", "menedżer", "grafik",
-        "architekt", "dentysta", "farmaceuta", "policjant", "strażak",
+        # Zawody wymagające studiów wyższych (min. 5-6 lat)
+        {"name": "lekarz", "min_age": 26, "max_age": 70, "income_min": 6000, "income_max": 20000},
+        {"name": "dentysta", "min_age": 26, "max_age": 70, "income_min": 7000, "income_max": 25000},
+        {"name": "prawnik", "min_age": 24, "max_age": 70, "income_min": 5000, "income_max": 18000},
+        {"name": "architekt", "min_age": 26, "max_age": 70, "income_min": 5500, "income_max": 15000},
+        {"name": "farmaceuta", "min_age": 25, "max_age": 70, "income_min": 5500, "income_max": 12000},
+        {"name": "programista", "min_age": 22, "max_age": 65, "income_min": 6000, "income_max": 25000},
+        {"name": "inżynier", "min_age": 23, "max_age": 70, "income_min": 5000, "income_max": 15000},
+        {"name": "księgowy", "min_age": 23, "max_age": 70, "income_min": 4000, "income_max": 12000},
+        {"name": "menedżer", "min_age": 28, "max_age": 65, "income_min": 7000, "income_max": 25000},
+        {"name": "nauczyciel", "min_age": 23, "max_age": 67, "income_min": 4000, "income_max": 8000},
+        {"name": "grafik", "min_age": 21, "max_age": 65, "income_min": 3500, "income_max": 12000},
+        {"name": "pielęgniarka", "min_age": 22, "max_age": 67, "income_min": 4500, "income_max": 8000},
+        
+        # Zawody bez wymagań wyższego wykształcenia
+        {"name": "sprzedawca", "min_age": 18, "max_age": 65, "income_min": 2800, "income_max": 5000},
+        {"name": "kierowca", "min_age": 21, "max_age": 67, "income_min": 3500, "income_max": 7000},
+        {"name": "fryzjer", "min_age": 18, "max_age": 65, "income_min": 2500, "income_max": 6000},
+        {"name": "kelner", "min_age": 18, "max_age": 55, "income_min": 2500, "income_max": 4500},
+        {"name": "mechanik", "min_age": 18, "max_age": 65, "income_min": 3000, "income_max": 7000},
+        {"name": "elektryk", "min_age": 18, "max_age": 65, "income_min": 3500, "income_max": 8000},
+        {"name": "policjant", "min_age": 21, "max_age": 60, "income_min": 4500, "income_max": 9000},
+        {"name": "strażak", "min_age": 21, "max_age": 55, "income_min": 4500, "income_max": 8000},
+        {"name": "pracownik biurowy", "min_age": 19, "max_age": 67, "income_min": 3500, "income_max": 7000},
+        {"name": "pracownik budowlany", "min_age": 18, "max_age": 60, "income_min": 3500, "income_max": 8000},
+        {"name": "kucharz", "min_age": 18, "max_age": 65, "income_min": 3000, "income_max": 7000},
+        
+        # Statusy specjalne (wiek/sytuacja życiowa)
+        {"name": "student", "min_age": 18, "max_age": 27, "income_min": 0, "income_max": 2500},
+        {"name": "emeryt", "min_age": 60, "max_age": 100, "income_min": 2000, "income_max": 4500},
+        {"name": "rencista", "min_age": 35, "max_age": 100, "income_min": 1800, "income_max": 3500},
     ],
     Language.EN: [
-        "software developer", "teacher", "doctor", "lawyer", "engineer",
-        "sales associate", "driver", "nurse", "hairdresser", "waiter",
-        "mechanic", "electrician", "accountant", "manager", "graphic designer",
-        "architect", "dentist", "pharmacist", "police officer", "firefighter",
+        # Professions requiring higher education
+        {"name": "doctor", "min_age": 26, "max_age": 70, "income_min": 8000, "income_max": 25000},
+        {"name": "dentist", "min_age": 26, "max_age": 70, "income_min": 9000, "income_max": 30000},
+        {"name": "lawyer", "min_age": 24, "max_age": 70, "income_min": 6000, "income_max": 20000},
+        {"name": "architect", "min_age": 26, "max_age": 70, "income_min": 5500, "income_max": 15000},
+        {"name": "pharmacist", "min_age": 25, "max_age": 70, "income_min": 6000, "income_max": 12000},
+        {"name": "software developer", "min_age": 22, "max_age": 65, "income_min": 7000, "income_max": 25000},
+        {"name": "engineer", "min_age": 23, "max_age": 70, "income_min": 5500, "income_max": 15000},
+        {"name": "accountant", "min_age": 23, "max_age": 70, "income_min": 4500, "income_max": 12000},
+        {"name": "manager", "min_age": 28, "max_age": 65, "income_min": 8000, "income_max": 25000},
+        {"name": "teacher", "min_age": 23, "max_age": 67, "income_min": 4000, "income_max": 8000},
+        {"name": "graphic designer", "min_age": 21, "max_age": 65, "income_min": 4000, "income_max": 12000},
+        {"name": "nurse", "min_age": 22, "max_age": 67, "income_min": 5000, "income_max": 9000},
+        
+        # Professions without higher education requirement
+        {"name": "sales associate", "min_age": 18, "max_age": 65, "income_min": 2500, "income_max": 5000},
+        {"name": "driver", "min_age": 21, "max_age": 67, "income_min": 3500, "income_max": 7000},
+        {"name": "hairdresser", "min_age": 18, "max_age": 65, "income_min": 2500, "income_max": 6000},
+        {"name": "waiter", "min_age": 18, "max_age": 55, "income_min": 2500, "income_max": 5000},
+        {"name": "mechanic", "min_age": 18, "max_age": 65, "income_min": 3500, "income_max": 8000},
+        {"name": "electrician", "min_age": 18, "max_age": 65, "income_min": 4000, "income_max": 9000},
+        {"name": "police officer", "min_age": 21, "max_age": 60, "income_min": 5000, "income_max": 10000},
+        {"name": "firefighter", "min_age": 21, "max_age": 55, "income_min": 5000, "income_max": 9000},
+        {"name": "office worker", "min_age": 19, "max_age": 67, "income_min": 3500, "income_max": 7000},
+        {"name": "construction worker", "min_age": 18, "max_age": 60, "income_min": 3500, "income_max": 8000},
+        {"name": "chef", "min_age": 18, "max_age": 65, "income_min": 3500, "income_max": 8000},
+        
+        # Special statuses (age/life situation)
+        {"name": "student", "min_age": 18, "max_age": 27, "income_min": 0, "income_max": 2500},
+        {"name": "retiree", "min_age": 60, "max_age": 100, "income_min": 2000, "income_max": 5000},
+        {"name": "disability pensioner", "min_age": 35, "max_age": 100, "income_min": 1800, "income_max": 4000},
     ],
 }
+
 
 
 # =============================================================================
