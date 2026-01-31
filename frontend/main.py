@@ -1358,14 +1358,11 @@ def export_report(
         # Return download URL as HTML link (bypasses Gradio file handling bug)
         cache_dir = str(gr_utils.get_cache_folder())
         cached_path = processing_utils.save_file_to_cache(output_path, cache_dir)
-        download_path = f"/file={cached_path}"
-        download_url = _build_app_url(download_path, request)
-        download_link = f'<a href="{download_url}" download="{output_path.name}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:white;text-decoration:none;border-radius:6px;font-weight:bold;">📥 Download {output_path.name}</a>'
-        logger.info("Export download link generated | filename=%s url=%s", output_path.name, download_url)
+        logger.info("Export file cached | filename=%s cached_path=%s", output_path.name, cached_path)
         if lang == Language.EN:
-            return download_link, f"✅ Ready to download"
+            return cached_path, "✅ Ready to download"
         else:
-            return download_link, f"✅ Gotowe do pobrania"
+            return cached_path, "✅ Gotowe do pobrania"
 
     
     except Exception as e:
@@ -1700,18 +1697,15 @@ def export_focus_group(
     # Return download URL as HTML link (bypasses Gradio file handling bug)
     cache_dir = str(gr_utils.get_cache_folder())
     cached_path = processing_utils.save_file_to_cache(filepath, cache_dir)
-    download_path = f"/file={cached_path}"
-    download_url = _build_app_url(download_path, request)
-    download_link = f'<a href="{download_url}" download="{filepath.name}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:white;text-decoration:none;border-radius:6px;font-weight:bold;">📥 Download {filepath.name}</a>'
     logging.getLogger(__name__).info(
-        "Export download link generated | filename=%s url=%s",
+        "Export file cached | filename=%s cached_path=%s",
         filepath.name,
-        download_url,
+        cached_path,
     )
     if lang == Language.EN:
-        return download_link, f"✅ Ready to download"
+        return cached_path, "✅ Ready to download"
     else:
-        return download_link, f"✅ Gotowe do pobrania"
+        return cached_path, "✅ Gotowe do pobrania"
 
 
 # === Project Management ===
@@ -2431,7 +2425,7 @@ def create_interface():
                     )
                     export_btn = gr.Button("💾 Export / Eksportuj", variant="primary", scale=1)
                 export_status = gr.Markdown("")
-                export_file = gr.HTML(label="📥 Download / Pobierz")
+                export_file = gr.File(label="📥 Download / Pobierz")
 
                 report_btn.click(
                     fn=generate_report,
@@ -2599,7 +2593,7 @@ def create_interface():
                         min_width=120,
                     )
                     fg_export_btn = gr.Button("📥 Export", variant="secondary")
-                    fg_export_file = gr.HTML(label="Download")
+                    fg_export_file = gr.File(label="Download")
                     fg_export_status = gr.Markdown("")
                 
                 fg_export_btn.click(
