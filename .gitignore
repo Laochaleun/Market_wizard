@@ -59,6 +59,7 @@ logs/
 .cache/
 .gradio/
 data/
+!backend/app/data/
 
 # Model cache (can be large)
 .sentence_transformers/
