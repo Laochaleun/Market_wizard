@@ -7,6 +7,7 @@ Supports Polish (PL) and English (EN) languages.
 
 import asyncio
 import logging
+import os
 import tempfile
 from urllib.parse import urljoin
 from datetime import datetime
@@ -1163,6 +1164,14 @@ _last_report_only_cited = None
 
 def _build_download_url(filename: str, request: gr.Request | None) -> str:
     logger = logging.getLogger(__name__)
+    external_base_url = os.getenv("MARKET_WIZARD_EXTERNAL_BASE_URL")
+    if external_base_url:
+        logger.info(
+            "Download URL override via MARKET_WIZARD_EXTERNAL_BASE_URL=%s filename=%s",
+            external_base_url,
+            filename,
+        )
+        return urljoin(external_base_url.rstrip("/") + "/", f"download-report/{filename}")
     if request:
         try:
             scope = getattr(request, "scope", {}) or {}
@@ -1309,6 +1318,7 @@ def export_report(
         # Return download URL as HTML link (bypasses Gradio file handling bug)
         download_url = _build_download_url(output_path.name, request)
         download_link = f'<a href="{download_url}" download="{output_path.name}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:white;text-decoration:none;border-radius:6px;font-weight:bold;">📥 Download {output_path.name}</a>'
+        logger.info("Export download link generated | filename=%s url=%s", output_path.name, download_url)
         if lang == Language.EN:
             return download_link, f"✅ Ready to download"
         else:
@@ -1647,6 +1657,11 @@ def export_focus_group(
     # Return download URL as HTML link (bypasses Gradio file handling bug)
     download_url = _build_download_url(filepath.name, request)
     download_link = f'<a href="{download_url}" download="{filepath.name}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:white;text-decoration:none;border-radius:6px;font-weight:bold;">📥 Download {filepath.name}</a>'
+    logging.getLogger(__name__).info(
+        "Export download link generated | filename=%s url=%s",
+        filepath.name,
+        download_url,
+    )
     if lang == Language.EN:
         return download_link, f"✅ Ready to download"
     else:
