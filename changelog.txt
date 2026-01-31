@@ -31,3 +31,8 @@ v0.3.6 (2026-01-31)
 - Fixed download endpoint routing by mounting Gradio into FastAPI and serving files via a dedicated `/download-report/{filename}` route.
 - Export links now use request-aware absolute URLs (base_url / forwarded headers) to play nicely with proxies.
 - Added targeted logging around download URL construction and Gradio mount for easier HF debugging.
+
+v0.3.7 (2026-01-31)
+- Finalized HF download fix by caching exports in Gradio's cache and returning the cached files via `gr.File`, letting Gradio itself serve `/file=...`.
+- Removed custom `/download-report` route in favor of Gradio's native file serving, which avoids HF proxy restrictions.
+- Clarified session notes and logs to document the resolved flow (cache copy + __sign handling).

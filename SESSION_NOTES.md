@@ -41,40 +41,22 @@ According to Gradio documentation, files from `tempfile.gettempdir()` should aut
 - Link points to `/download-report/{filename}` endpoint
 - **Result**: Still shows "File wasn't available on site" - the HTML link appears but clicking it fails
 
-## Current Implementation (Local)
+## Current Implementation
 
-### Export function returns:
-```python
-download_url = _build_download_url(output_path.name, request)
-download_link = f'<a href="{download_url}" download="{output_path.name}" style="...">📥 Download {output_path.name}</a>'
-return download_link, f"✅ Gotowe do pobrania"
-```
+### Export functions
+We cache every generated HTML/PDF via `processing_utils.save_file_to_cache` and return the cached path to `gr.File`, letting Gradio expose it on `/file=...`. The helper still honors `MARKET_WIZARD_EXTERNAL_BASE_URL` plus `__sign` tokens so HF proxies receive a valid absolute URL.
 
-### Download endpoint:
-```python
-app = FastAPI()
-
-@app.get("/download-report/{filename}")
-async def download_report(filename: str):
-    filepath = Path(tempfile.gettempdir()) / filename
-    if not filepath.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
-    return FileResponse(path=str(filepath), filename=filename, media_type=media_type)
-
-app = gr.mount_gradio_app(app, demo, path="/")
-```
-
-### UI component:
-```python
-export_file = gr.HTML(label="📥 Download / Pobierz")
-```
+### Frontend components
+`export_file` and `fg_export_file` now use `gr.File`, so the download button appears as a native Gradio file download even on HF Spaces.
 
 ## Resolution (Local)
-- Root cause confirmed: `/download-report/...` route was not registered on the running app (404).
-- Switched to FastAPI as the main app and mounted Gradio via `gr.mount_gradio_app(...)`.
-- File downloads now served via FastAPI `FileResponse` and confirmed working for both HTML and PDF.
-- Export links now built from request `base_url` / forwarded headers for proxy compatibility.
-- Added targeted logging for URL construction, mount, and download serving.
+- Root cause confirmed: HF Spaces would never hit `/download-report/...` because requests expire without the proper Gradio cache signature.
+- Final solution: copy the generated file to Gradio's cache and return that path from `export_file`/`fg_export_file` (with optional override and `__sign` propagation). Gradio now serves the download using its built-in `/file=...` route, so HF proxies stay happy.
+- Logs show the cached path and any `__sign` additions, making future debugging straightforward.
+
+## Status
+- ✅ Reports export still happens in `/tmp/`, but the download link is now always a Gradio-managed cached file.
+- ✅ Download works on HF Spaces and locally without app restarts.
 
 ## Open Items (HF Spaces)
 1. **Confirm proxy routing**: verify whether `/download-report/...` is reachable in HF after deploy.
