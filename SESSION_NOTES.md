@@ -19,7 +19,7 @@ Gradio has a known bug in version 6.x (GitHub Issue #12452) where dynamically ge
 
 According to Gradio documentation, files from `tempfile.gettempdir()` should automatically be cached and served, but this doesn't work on HF Spaces.
 
-## Failed Solutions
+## Attempts (Historical)
 
 ### Attempt 1: Save to project-relative `reports/` directory
 - Changed output path from `/tmp/` to `PROJECT_BASE_DIR / "reports"`
@@ -35,19 +35,13 @@ According to Gradio documentation, files from `tempfile.gettempdir()` should aut
 - Changed return from `str(output_path)` to `gr.File(value=str(output_path), visible=True)`
 - **Result**: Caused app restart loop on HF Spaces
 
-### Attempt 4: Add FastAPI download endpoint to bypass Gradio
-- Added `/download-report/{filename}` endpoint using `FileResponse`
-- Endpoint added via `demo.app` (Gradio's underlying FastAPI/Starlette app)
-- Changed export functions to return download URL
-- **Result**: `gr.File` component tried to stat the URL as filesystem path - crashed
-
-### Attempt 5: Replace `gr.File` with `gr.HTML` for download link
+### Attempt 4: Replace `gr.File` with `gr.HTML` for download link
 - Changed output component from `gr.File` to `gr.HTML`
 - Export functions return styled HTML `<a>` tag with download link
 - Link points to `/download-report/{filename}` endpoint
 - **Result**: Still shows "File wasn't available on site" - the HTML link appears but clicking it fails
 
-## Current State of Code
+## Current Implementation (Local)
 
 ### Export function returns:
 ```python
@@ -75,14 +69,6 @@ app = gr.mount_gradio_app(app, demo, path="/")
 export_file = gr.HTML(label="📥 Download / Pobierz")
 ```
 
-## Hypotheses to Test in Next Session
-
-1. **HF Spaces proxy issue**: HF Spaces might be proxying requests and blocking non-Gradio routes
-2. **Route registration timing**: The download endpoint might not be properly registered before `demo.launch()` (resolved locally with FastAPI mount)
-3. **Need to use `gr.mount_gradio_app()` pattern**: Instead of adding routes to Gradio's app, mount Gradio into a FastAPI app (implemented locally)
-4. **Gradio's `root_path` configuration**: HF Spaces might use a different root path that breaks relative URLs
-5. **Use absolute URL with HF Spaces domain**: Instead of `/download-report/...`, use full URL `https://pa-sk-market-wizard.hf.space/download-report/...`
-
 ## Resolution (Local)
 - Root cause confirmed: `/download-report/...` route was not registered on the running app (404).
 - Switched to FastAPI as the main app and mounted Gradio via `gr.mount_gradio_app(...)`.
@@ -90,16 +76,21 @@ export_file = gr.HTML(label="📥 Download / Pobierz")
 - Export links now built from request `base_url` / forwarded headers for proxy compatibility.
 - Added targeted logging for URL construction, mount, and download serving.
 
+## Open Items (HF Spaces)
+1. **Confirm proxy routing**: verify whether `/download-report/...` is reachable in HF after deploy.
+2. **Check root_path/base_url**: verify request URL, root_path, and forwarded headers in logs.
+3. **Try absolute URL in UI**: if root_path mismatch persists, force full URL using HF Space domain.
+
 ## Files Changed During This Session
 - `/Users/pawel/Market_wizard/frontend/main.py` - Multiple changes to export logic and UI components
 - `/Users/pawel/Market_wizard/Dockerfile` - Added `/app/reports` directory creation
- - `/Users/pawel/Market_wizard/frontend/main.py` - Mounted Gradio into FastAPI and added request-aware download URLs/logs
+- `/Users/pawel/Market_wizard/frontend/main.py` - Mounted Gradio into FastAPI and added request-aware download URLs/logs
 
 ## Relevant Documentation Links
 - Gradio File Access: https://www.gradio.app/guides/file-access
 - Gradio Issue #12452: https://github.com/gradio-app/gradio/issues/12452
 - HF Spaces Docker: https://huggingface.co/docs/hub/spaces-sdks-docker
- - Gradio mount_gradio_app: https://www.gradio.app/docs/gradio/mount_gradio_app
+- Gradio mount_gradio_app: https://www.gradio.app/docs/gradio/mount_gradio_app
 
 ## Screenshot of Error
 ![Download error](/Users/pawel/.gemini/antigravity/brain/55155640-d6a9-476c-8f95-31038b0f77a2/uploaded_media_1769801944368.png)
