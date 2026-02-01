@@ -45,7 +45,7 @@ class SimulationEngine:
 
 
         language: Language = Language.PL,
-        temperature: float = 0.01,
+        temperature: float = 1.0,
         llm_temperature: float | None = None,
     ):
         self.language = language

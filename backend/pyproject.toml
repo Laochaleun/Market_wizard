@@ -21,7 +21,7 @@ dependencies = [
     "pytz",
     "google-genai>=1.50",  # New Gemini SDK
     "openai>=1.50",
-    "sentence-transformers>=3.0",  # For local BGE-M3 embeddings
+    "sentence-transformers>=3.0",  # For local MiniLM embeddings
     "gradio>=5.0",
     "httpx>=0.27",
     "beautifulsoup4>=4.12",

@@ -1,7 +1,9 @@
-"""Embedding client supporting local BGE-M3 and OpenAI embeddings."""
+"""Embedding client supporting local sentence-transformers and OpenAI embeddings."""
+
+from typing import Protocol
+import logging
 
 import numpy as np
-from typing import Protocol
 
 from app.config import get_settings
 
@@ -15,9 +17,9 @@ class EmbeddingClient(Protocol):
 
 
 class LocalEmbeddingClient:
-    """Local embedding client using sentence-transformers (BGE-M3)."""
+    """Local embedding client using sentence-transformers (MiniLM by default)."""
 
-    def __init__(self, model_name: str = "BAAI/bge-m3"):
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
         from sentence_transformers import SentenceTransformer
 
         self.model = SentenceTransformer(model_name)
@@ -58,3 +60,29 @@ def get_embedding_client() -> EmbeddingClient:
         )
     else:
         raise ValueError(f"Unknown embedding provider: {settings.embedding_provider}")
+
+
+def warmup_embeddings() -> None:
+    """Ensure the local embedding model is downloaded and ready."""
+    settings = get_settings()
+    if settings.embedding_provider != "local":
+        return
+
+    logger = logging.getLogger(__name__)
+    warmup_enabled = str(getattr(settings, "embedding_warmup", True)).lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+    if not warmup_enabled:
+        logger.info("Embedding warmup disabled")
+        return
+
+    try:
+        client = LocalEmbeddingClient(model_name=settings.embedding_model)
+        # Trigger model download/caching with a tiny encode.
+        client.embed(["warmup"])
+        logger.info("Embedding warmup complete | model=%s", settings.embedding_model)
+    except Exception as exc:
+        logger.warning("Embedding warmup failed | model=%s | error=%s", settings.embedding_model, exc)

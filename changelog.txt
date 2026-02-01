@@ -1,3 +1,11 @@
+v0.5.0 (2026-02-01)
+- Aligned SSR computation with the reference implementation (cosine scaled to [0,1], epsilon on min only, temperature applied post-PMF).
+- Set SSR defaults to temperature=1.0 and epsilon=0.0.
+- Switched local embedding default to `all-MiniLM-L6-v2` for consistency with the SSR tool.
+- Added embedding warmup on startup (API + UI) to pre-download the local model (works on HF Spaces).
+- Added `EMBEDDING_WARMUP` flag to disable warmup when needed (default: on).
+- Updated docs to list supported embedding models and clarify automatic local model download.
+
 v0.4.0 (2026-01-31)
 - Integrated GUS 2024 data for Income Levels: 5 new categories (Very Low to Very High) based on official decile/quintile net income ranges.
 - Integrated GUS 2024 data for Location/Urbanization: 5 new categories (Rural, Small City, Medium City, Large City, Metropolis) with accurate population weights (~41% rural, ~13% metropolis).

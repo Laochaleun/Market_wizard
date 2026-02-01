@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
+from app.services.embedding_client import warmup_embeddings
 
 
 @asynccontextmanager
@@ -16,6 +17,7 @@ async def lifespan(app: FastAPI):
     print(f"🚀 Market Wizard starting...")
     print(f"   LLM Model: {settings.llm_model}")
     print(f"   Embedding: {settings.embedding_provider} ({settings.embedding_model})")
+    warmup_embeddings()
     yield
     # Shutdown
     print("👋 Market Wizard shutting down...")

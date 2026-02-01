@@ -41,7 +41,7 @@ class SSREngine:
         embedding_client: EmbeddingClient | None = None,
         anchor_sets: List[Dict[int, str]] | None = None,
         language: Language = Language.PL,
-        temperature: float = 0.01,
+        temperature: float = 1.0,
         epsilon: float = 0.0,
     ):
         """
@@ -84,6 +84,29 @@ class SSREngine:
         """Compute cosine similarity between two vectors."""
         return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
+    def _scale_pmf(self, pmf: Dict[int, float]) -> Dict[int, float]:
+        """
+        Scale a PMF using temperature scaling (paper/tool behavior).
+
+        If temperature == 0, return a one-hot vector at the max probability.
+        Otherwise scale by p^(1/T) and re-normalize.
+        """
+        if self.temperature == 1.0:
+            return pmf
+
+        values = np.array([pmf[r] for r in range(1, 6)], dtype=float)
+        if self.temperature == 0.0:
+            if np.all(values == values[0]):
+                return pmf
+            new_vals = np.zeros_like(values)
+            new_vals[np.argmax(values)] = 1.0
+        else:
+            new_vals = values ** (1 / self.temperature)
+        total = new_vals.sum()
+        if total <= 0:
+            return {r: 0.2 for r in range(1, 6)}
+        return {r: new_vals[r - 1] / total for r in range(1, 6)}
+
     def _compute_pmf_for_set(
         self, response_embedding: np.ndarray, anchor_set_idx: int
     ) -> Dict[int, float]:
@@ -91,9 +114,9 @@ class SSREngine:
         Compute PMF for a single anchor set.
         
         Following the paper's methodology:
-        1. Compute cosine similarity with each anchor
+        1. Compute cosine similarity with each anchor (scaled to [0,1])
         2. Subtract minimum similarity (to handle low variance)
-        3. Apply temperature scaling
+        3. Apply epsilon to one minimum position (Kronecker delta)
         4. Normalize to get PMF
         """
         anchor_emb = self._anchor_embeddings[anchor_set_idx]
@@ -104,13 +127,17 @@ class SSREngine:
             for r in range(1, 6)
         }
 
-        # Subtract minimum (as per paper equation)
-        min_sim = min(similarities.values())
-        adjusted = {r: similarities[r] - min_sim + self.epsilon for r in range(1, 6)}
+        # Scale cosine similarities to [0,1] as in the reference implementation
+        similarities = {r: (1 + similarities[r]) / 2 for r in range(1, 6)}
 
-        # Apply temperature scaling
-        if self.temperature != 1.0:
-            adjusted = {r: adjusted[r] ** (1 / self.temperature) for r in range(1, 6)}
+        # Subtract minimum similarity (as per paper equation)
+        min_sim = min(similarities.values())
+        adjusted = {r: similarities[r] - min_sim for r in range(1, 6)}
+
+        # Add epsilon only to the minimum position (Kronecker delta effect)
+        if self.epsilon > 0:
+            min_key = min(similarities, key=similarities.get)
+            adjusted[min_key] += self.epsilon
 
         # Normalize to PMF
         total = sum(adjusted.values())
@@ -148,6 +175,9 @@ class SSREngine:
         # Normalize averaged PMF
         total = sum(avg_pmf.values())
         avg_pmf = {r: avg_pmf[r] / total for r in range(1, 6)}
+
+        # Apply temperature scaling to averaged PMF (paper/tool behavior)
+        avg_pmf = self._scale_pmf(avg_pmf)
 
         # Compute expected Likert score
         expected_score = sum(r * avg_pmf[r] for r in range(1, 6))

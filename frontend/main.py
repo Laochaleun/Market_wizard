@@ -44,6 +44,7 @@ from app.services.llm_client import get_report_analysis_client
 from app.services.report_generator import generate_html_report, save_report
 from app.i18n import Language, get_label
 from app.config import get_settings
+from app.services.embedding_client import warmup_embeddings
 
 
 # Store last simulation result for report generation
@@ -64,6 +65,10 @@ _last_price_analysis_inputs = None
 _last_focus_group_inputs = None
 _last_report_analysis = None
 _last_report_analysis_key = None
+
+
+# Warm up local embeddings on startup to ensure model is downloaded (local & HF).
+warmup_embeddings()
 
 
 # === Helper Functions ===
@@ -3210,7 +3215,7 @@ def create_interface():
         gr.Markdown(
             """
             ---
-            *Market Wizard v0.4.0 | Based on arXiv:2510.08338 | PL/EN*
+            *Market Wizard v0.5.0 | Based on arXiv:2510.08338 | PL/EN*
             """
         )
 

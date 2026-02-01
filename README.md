@@ -164,8 +164,17 @@ Market_wizard/
 | `LLM_MODEL` | Model Gemini | `gemini-2.0-flash-001` |
 | `RESEARCH_LLM_MODEL` | Model do groundingu (wyszukiwania źródeł) | `gemini-2.5-flash-lite` |
 | `RESEARCH_INTERPRETATION_MODEL` | Model do interpretacji treści źródeł | `gemini-3-flash-preview` |
-| `EMBEDDING_MODEL` | Model embeddingów | `BAAI/bge-m3` (lokalny) |
+| `EMBEDDING_MODEL` | Model embeddingów | `all-MiniLM-L6-v2` (lokalny) |
+| `EMBEDDING_WARMUP` | Warmup modelu lokalnego (pobranie przy starcie) | `true` |
 | `GUS_API_KEY` | Opcjonalny - dla API GUS | - |
+
+### Modele embeddingów (lokalne)
+
+Wspierane modele:
+- `all-MiniLM-L6-v2` (domyślny, zgodny z SSR tool)
+- `BAAI/bge-m3` (opcjonalny)
+
+Model lokalny jest automatycznie pobierany przy starcie aplikacji.
 
 ### Modele LLM
 

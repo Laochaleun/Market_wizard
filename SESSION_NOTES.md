@@ -58,6 +58,13 @@ We cache every generated HTML/PDF via `processing_utils.save_file_to_cache` and 
 - ✅ Reports export still happens in `/tmp/`, but the download link is now always a Gradio-managed cached file.
 - ✅ Download works on HF Spaces and locally without app restarts.
 
+## Follow-up (2026-02-01)
+- SSR implementation aligned with the reference SSR tool (cosine scaled to [0,1], epsilon on min only, temperature scaling after PMF).
+- Defaults set to temperature=1.0 and epsilon=0.0.
+- Local embedding default changed to `all-MiniLM-L6-v2`.
+- Added embedding warmup on startup (API + UI) to force local model download in both local and HF environments.
+- Added `EMBEDDING_WARMUP` flag (default on) to disable warmup in CI/offline runs if needed.
+
 ## Open Items (HF Spaces)
 1. **Confirm proxy routing**: verify whether `/download-report/...` is reachable in HF after deploy.
 2. **Check root_path/base_url**: verify request URL, root_path, and forwarded headers in logs.
