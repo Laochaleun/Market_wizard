@@ -474,7 +474,7 @@ def mark_dirty(
         "location_type": "Wszystkie",
         "n_agents": 20,
         "enable_web_search": True,
-        "temperature": 0.01,
+        "temperature": 1.0,
         "variant_a_input": "",
         "variant_b_input": "",
         "ab_n_agents": 30,
@@ -940,7 +940,7 @@ async def run_simulation_async(
     income_level: Optional[str],
     location_type: Optional[str],
     enable_web_search: bool = True,
-    temperature: float = 0.01,
+    temperature: float = 1.0,
     project_id: str | None = None,
     progress=gr.Progress(),
 ):
@@ -2227,7 +2227,7 @@ def load_project(
         n_agents_value = int(sim_inputs.get("n_agents") or 20)
         n_agents_value = max(5, min(100, n_agents_value))
         enable_web_search_value = bool(sim_inputs.get("enable_web_search", True))
-        temperature_value = float(sim_inputs.get("temperature") or 0.01)
+        temperature_value = float(sim_inputs.get("temperature") or 1.0)
 
         variant_a_value = ab_inputs.get("variant_a") or product_value
         variant_b_value = ab_inputs.get("variant_b") or ""
@@ -2480,10 +2480,10 @@ def create_interface():
                             temperature = gr.Slider(
                                 minimum=0.01, 
                                 maximum=2.0, 
-                                value=0.01, 
+                                value=1.0, 
                                 step=0.01, 
                                 label="SSR Temperature / Temperatura",
-                                info="Lower = more decisive (default 0.01), Higher = smoother (paper 1.0) / Niższa = bardziej zdecydowane"
+                                info="Lower = more decisive, Higher = smoother (paper 1.0) / Niższa = bardziej zdecydowane"
                             )
 
                         run_btn = gr.Button("🚀 Run Simulation / Uruchom", variant="primary")

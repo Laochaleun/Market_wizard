@@ -6,6 +6,7 @@ to produce complete simulation results.
 """
 
 import asyncio
+import re
 from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
@@ -55,14 +56,55 @@ class SimulationEngine:
         self.llm_temperature = llm_temperature
         self._logger = logging.getLogger(__name__)
 
+    def _extract_purchase_intent_text(self, opinion: str) -> str:
+        """Extract a concise purchase-intent statement for SSR scoring."""
+        cleaned = (opinion or "").strip()
+        if not cleaned:
+            return opinion
+
+        section = cleaned
+        heading_match = re.search(r"(?mi)^\s*3[.)]\s*(.*)$", cleaned)
+        if heading_match:
+            section = cleaned[heading_match.start():]
+            next_heading = re.search(r"(?mi)^\s*[1245][.)]\s+", section[1:])
+            if next_heading:
+                section = section[: next_heading.start() + 1]
+            section = re.sub(r"(?mi)^\s*3[.)]\s*", "", section).strip()
+        else:
+            if self.language == Language.PL:
+                phrase_match = re.search(r"(?i)\bczy\s+kup", cleaned)
+            else:
+                phrase_match = re.search(r"(?i)\bwould\s+you\s+buy\b", cleaned)
+            if phrase_match:
+                section = cleaned[phrase_match.start():].strip()
+
+        section = re.sub(r"[ \t]+", " ", section)
+        section = re.sub(r"\n{2,}", "\n", section).strip()
+
+        sentences = re.split(r"(?<=[.!?])\s+", section)
+        for sentence in sentences:
+            candidate = sentence.strip()
+            if not candidate:
+                continue
+            if re.search(r"(?i)^(czy\s+kup|would\s+you\s+buy)", candidate):
+                continue
+            return candidate
+
+        for line in section.splitlines():
+            candidate = line.strip()
+            if candidate:
+                return candidate
+
+        return cleaned
+
     async def _generate_opinion_for_persona(
         self,
         persona: Persona,
         product_description: str,
         enable_web_search: bool = False,
         global_sources: list[dict[str, str]] | None = None,
-    ) -> tuple[Persona, str, list[str]]:
-        """Generate opinion for a single persona. Returns (persona, opinion, sources)."""
+    ) -> tuple[Persona, str, list[str], str | None]:
+        """Generate opinion for a single persona. Returns (persona, opinion, sources, ssr_text)."""
         if enable_web_search:
             if hasattr(self.llm_client, "generate_opinion_with_sources"):
                 opinion, sources = await self.llm_client.generate_opinion_with_sources(
@@ -80,6 +122,12 @@ class SimulationEngine:
                     temperature=self.llm_temperature,
                 )
                 sources = []
+            ssr_text = await self.llm_client.generate_opinion(
+                persona,
+                product_description,
+                language=self.language,
+                temperature=self.llm_temperature,
+            )
         else:
             opinion = await self.llm_client.generate_opinion(
                 persona,
@@ -88,7 +136,8 @@ class SimulationEngine:
                 temperature=self.llm_temperature,
             )
             sources = []
-        return persona, opinion, sources
+            ssr_text = None
+        return persona, opinion, sources, ssr_text
 
     async def run_simulation(
         self,
@@ -146,7 +195,7 @@ class SimulationEngine:
                     "Web search enabled but no sources returned; proceeding without sources."
                 )
 
-        async def generate_with_limit(persona: Persona) -> tuple[Persona, str, list[str]]:
+        async def generate_with_limit(persona: Persona) -> tuple[Persona, str, list[str], str | None]:
             async with semaphore:
                 return await self._generate_opinion_for_persona(
                     persona,
@@ -159,33 +208,38 @@ class SimulationEngine:
         opinions = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Filter out failed generations (exceptions)
-        valid_opinions: List[tuple[Persona, str, list[str]]] = []
+        valid_opinions: List[tuple[Persona, str, list[str], str | None]] = []
         all_sources: List[str] = [s.get("url") for s in global_sources_list if s.get("url")]
         for result in opinions:
             if isinstance(result, Exception):
                 # Log error but continue
                 print(f"⚠️ LLM error: {result}")
                 continue
-            if isinstance(result, tuple) and len(result) == 3:
-                persona, opinion, sources = result
+            if isinstance(result, tuple) and len(result) == 4:
+                persona, opinion, sources, ssr_text = result
                 if isinstance(opinion, str) and opinion:
-                    valid_opinions.append((persona, opinion, sources))
+                    valid_opinions.append((persona, opinion, sources, ssr_text))
                     all_sources.extend(sources)
 
         if not valid_opinions:
             raise RuntimeError("Wszystkie zapytania do LLM zakończyły się błędem")
 
         # Step 3: Rate opinions using SSR
-        text_responses = [o for _, o, _ in valid_opinions]
+        text_responses = []
+        for _, opinion, _, ssr_text in valid_opinions:
+            if isinstance(ssr_text, str) and ssr_text.strip():
+                text_responses.append(ssr_text.strip())
+            else:
+                text_responses.append(self._extract_purchase_intent_text(opinion))
         ssr_results: List[SSRResult] = self.ssr_engine.rate_responses(text_responses)
 
         # Step 4: Build agent responses
         agent_responses: List[AgentResponse] = []
-        for (persona, _, sources), ssr_result in zip(valid_opinions, ssr_results):
+        for (persona, opinion, sources, _), ssr_result in zip(valid_opinions, ssr_results):
             agent_responses.append(
                 AgentResponse(
                     persona=persona,
-                    text_response=ssr_result.text_response,
+                    text_response=opinion,
                     likert_pmf=ssr_result.likert_pmf,
                     likert_score=ssr_result.expected_score,
                     sources=sources,

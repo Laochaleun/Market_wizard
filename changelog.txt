@@ -1,6 +1,9 @@
 v0.5.0 (2026-02-01)
 - Aligned SSR computation with the reference implementation (cosine scaled to [0,1], epsilon on min only, temperature applied post-PMF).
 - Set SSR defaults to temperature=1.0 and epsilon=0.0.
+- SSR now scores only the purchase-intent answer (Q3) when long, sourced opinions are generated.
+- SSR now generates a separate short purchase-intent statement when web-search opinions are long, matching paper-style elicitation.
+- Updated UI defaults to show SSR temperature = 1.0 in Advanced Settings.
 - Switched local embedding default to `all-MiniLM-L6-v2` for consistency with the SSR tool.
 - Added embedding warmup on startup (API + UI) to pre-download the local model (works on HF Spaces).
 - Added `EMBEDDING_WARMUP` flag to disable warmup when needed (default: on).

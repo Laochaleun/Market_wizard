@@ -175,6 +175,7 @@ Wspierane modele:
 - `BAAI/bge-m3` (opcjonalny)
 
 Model lokalny jest automatycznie pobierany przy starcie aplikacji.
+> **Uwaga:** Model embeddingów ma istotny wpływ na rozkłady SSR (np. przesunięcie masy w stronę 4–5). Porównuj wyniki tylko przy stałym embeddingu. Szczegóły: `technical_report.md`.
 
 ### Modele LLM
 
@@ -283,9 +284,10 @@ Oparta na badaniu: **Maier, B.F., et al. (2025).** *"LLMs Reproduce Human Purcha
 
 1. **Tekstowa elicytacja** - LLM odpowiada naturalnym tekstem (nie liczbą)
 2. **Anchor statements** - 6 zestawów zdań reprezentujących skalę 1-5
-3. **Embedddingi** - tekst → wektor (BGE-M3)
+3. **Embedddingi** - tekst → wektor (lokalnie `all-MiniLM-L6-v2` lub OpenAI `text-embedding-3-small`)
 4. **Cosine similarity** - porównanie z kotwicami → rozkład PMF
 5. **Agregacja** - średnia z wielu agentów
+6. **Intent-only SSR** - do punktacji używana jest krótka deklaracja intencji zakupu; dłuższe odpowiedzi są tylko do wniosków jakościowych
 
 ### Dlaczego SSR?
 
@@ -299,10 +301,8 @@ Oparta na badaniu: **Maier, B.F., et al. (2025).** *"LLMs Reproduce Human Purcha
 
 Parametr `temperature` kontroluje "zdecydowanie" modelu w ocenach.
 
-*   **1.0 (Domyślnie w artykule)**: Wyniki są bardziej wygładzone, "bezpieczne". Model unika skrajności (1 i 5).
-*   **0.01 (Domyślnie w aplikacji)**: Wyniki są "ostre" i zdecydowane. Model chętniej używa pełnej skali (1-5), co lepiej oddaje rzeczywiste, spolaryzowane opinie konsumentów (np. "Kocham to!" vs "Nienawidzę").
-
-> **Dlaczego 0.01?** Nasze testy na datasetach e-commerce (np. Kaggle Clothing Reviews) wykazały, że niższa temperatura zmniejsza błąd (MAE) o ~25% i zwiększa korelację z rzeczywistymi ocenami użytkowników.
+*   **1.0 (Domyślnie w aplikacji i w artykule)**: Wyniki są bardziej wygładzone, "bezpieczne". Model unika skrajności (1 i 5).
+*   **Niższe wartości**: Wyniki bardziej "ostre", większa skłonność do skrajności.
 
 ## 📄 Raporty
 

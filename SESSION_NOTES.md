@@ -64,6 +64,9 @@ We cache every generated HTML/PDF via `processing_utils.save_file_to_cache` and 
 - Local embedding default changed to `all-MiniLM-L6-v2`.
 - Added embedding warmup on startup (API + UI) to force local model download in both local and HF environments.
 - Added `EMBEDDING_WARMUP` flag (default on) to disable warmup in CI/offline runs if needed.
+- SSR scoring now uses only the purchase-intent answer (Q3) when opinions include longer multi-question responses.
+- When web-search opinions are long, SSR now generates a separate short purchase-intent statement to match paper-style elicitation.
+- Updated UI default to show SSR temperature = 1.0 in Advanced Settings.
 
 ## Open Items (HF Spaces)
 1. **Confirm proxy routing**: verify whether `/download-report/...` is reachable in HF after deploy.
