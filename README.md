@@ -310,6 +310,95 @@ Parametr `temperature` kontroluje "zdecydowanie" modelu w ocenach.
 *   **1.0 (Domyślnie w aplikacji i w artykule)**: Wyniki są bardziej wygładzone, "bezpieczne". Model unika skrajności (1 i 5).
 *   **Niższe wartości**: Wyniki bardziej "ostre", większa skłonność do skrajności.
 
+## 🧪 Testy zgodności z `semantic-similarity-rating`
+
+Poniżej minimalny zestaw kroków do potwierdzenia zgodności rdzenia SSR między:
+- `Market_wizard` (`backend/app/services/ssr_engine.py`)
+- `/Users/pawel/semantic-similarity-rating/semantic_similarity_rating`
+
+### 1) Testy SSR w Market Wizard
+
+```bash
+cd /Users/pawel/Market_wizard/backend
+pytest -q tests/test_ssr_engine.py
+```
+
+### 2) Testy referencyjnego repo
+
+```bash
+cd /Users/pawel/semantic-similarity-rating
+PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/pytest -q -p no:cacheprovider tests/test_compute.py tests/test_response_rater.py
+```
+
+### 3) Numeryczne porównanie rdzenia PMF/temperature (1:1)
+
+Uruchom poniższy skrypt z repo `Market_wizard`:
+
+```bash
+cd /Users/pawel/Market_wizard
+python - <<'PY'
+import numpy as np
+import importlib.util
+
+spec = importlib.util.spec_from_file_location(
+    "ssr_compute",
+    "/Users/pawel/semantic-similarity-rating/semantic_similarity_rating/compute.py",
+)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+ref_pmf = mod.response_embeddings_to_pmf
+ref_scale = mod.scale_pmf
+
+def mw_pmf(response_embeddings, likert_embeddings, epsilon=0.0):
+    M_left = response_embeddings
+    M_right = likert_embeddings
+    if M_left.shape[0] == 0:
+        return np.empty((0, M_right.shape[1]))
+    norm_right = np.linalg.norm(M_right, axis=0)
+    M_right = M_right / norm_right[None, :]
+    norm_left = np.linalg.norm(M_left, axis=1)
+    M_left = M_left / norm_left[:, None]
+    cos = (1 + M_left.dot(M_right)) / 2
+    cos_min = cos.min(axis=1)[:, None]
+    numerator = cos - cos_min
+    if epsilon > 0:
+        mins = np.argmin(cos, axis=1)
+        for i, j in enumerate(mins):
+            numerator[i, j] += epsilon
+    den = cos.sum(axis=1)[:, None] - cos.shape[1] * cos_min + epsilon
+    return numerator / den
+
+def mw_scale(pmf, temperature):
+    pmf = np.asarray(pmf, dtype=float)
+    if temperature == 1.0:
+        return pmf
+    if temperature == 0.0:
+        if np.all(pmf == pmf[0]):
+            return pmf
+        out = np.zeros_like(pmf)
+        out[np.argmax(pmf)] = 1.0
+        return out
+    hist = pmf ** (1 / temperature)
+    return hist / hist.sum()
+
+rng = np.random.default_rng(123)
+for eps in [0.0, 1e-6, 0.01, 0.2]:
+    for _ in range(50):
+        r = rng.normal(size=(6, 384))
+        l = rng.normal(size=(384, 5))
+        assert np.allclose(ref_pmf(r, l, epsilon=eps), mw_pmf(r, l, epsilon=eps), atol=1e-12, rtol=1e-12)
+
+for t in [0.0, 0.1, 1.0, 2.0, 10.0]:
+    for _ in range(50):
+        p = rng.random(5); p = p / p.sum()
+        assert np.allclose(ref_scale(p, t), mw_scale(p, t), atol=1e-12, rtol=1e-12)
+
+print("OK: PMF and temperature scaling are numerically equivalent.")
+PY
+```
+
+Oczekiwany rezultat: brak assertion error i komunikat `OK: PMF and temperature scaling are numerically equivalent.`
+
 ## 📄 Raporty
 
 Po uruchomieniu symulacji możesz wygenerować pełny raport HTML zawierający:

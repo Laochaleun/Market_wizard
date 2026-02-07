@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 
 from app.models import LikertDistribution
-from app.services.ssr_engine import SSREngine, SSRResult, DEFAULT_ANCHOR_SETS
+from app.services.ssr_engine import SSREngine, SSRResult
+from app.i18n import Language, get_anchor_sets
 
 
 class MockEmbeddingClient:
@@ -34,7 +35,7 @@ class MockEmbeddingClient:
         }
         
         # Also add anchor embeddings
-        for anchor_set in DEFAULT_ANCHOR_SETS:
+        for anchor_set in get_anchor_sets(Language.EN):
             for score, statement in anchor_set.items():
                 if statement not in self.embeddings:
                     # Create simple embeddings based on score
@@ -60,7 +61,7 @@ class TestSSREngine:
     @pytest.fixture
     def engine(self):
         """Create SSR Engine with mock embeddings."""
-        return SSREngine(embedding_client=MockEmbeddingClient())
+        return SSREngine(embedding_client=MockEmbeddingClient(), language=Language.EN)
 
     def test_rate_negative_response(self, engine):
         """Test that negative responses get low scores."""
