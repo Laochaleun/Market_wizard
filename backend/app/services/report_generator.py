@@ -19,9 +19,20 @@ import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import FuncFormatter
 
 from app.models import SimulationResult, Persona, AgentResponse
 from app.i18n import Language, get_label
+
+
+def _localized_gender_label(gender: str, lang: Language) -> str:
+    """Map internal gender code to language-specific report label."""
+    code = (gender or "").strip().upper()
+    if code == "F":
+        return "K" if lang == Language.PL else "F"
+    if code == "M":
+        return "M"
+    return gender or "-"
 
 
 def generate_distribution_chart(result: SimulationResult, lang: Language) -> str:
@@ -54,6 +65,7 @@ def generate_distribution_chart(result: SimulationResult, lang: Language) -> str
     ax.set_ylabel(ylabel, fontsize=12)
     ax.set_title(title, fontsize=14, fontweight='bold')
     ax.set_ylim(0, max(values) * 1.2 if max(values) > 0 else 100)
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{y:.0f}%"))
     
     # Add value labels on bars
     for bar, val in zip(bars, values):
@@ -235,6 +247,7 @@ def _generate_html_pl(
     for i, r in enumerate(responses, 1):
         p = r.persona
         score_color = _get_score_color(r.likert_score)
+        gender_label = _localized_gender_label(p.gender, Language.PL)
         responses_html += f"""
         <div style="background: #ffffff; border-radius: 0.75rem; padding: 1rem; margin-bottom: 1rem; border-left: 4px solid #1e3a5f; border: 1px solid #e5e7eb;">
             <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
@@ -244,7 +257,7 @@ def _generate_html_pl(
             </div>
             <div style="display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 0.75rem; font-size: 0.875rem;">
                 <span style="color: #000000; font-weight: 500;">🎂 {p.age} lat</span>
-                <span style="color: #000000; font-weight: 500;">👤 {p.gender}</span>
+                <span style="color: #000000; font-weight: 500;">👤 {gender_label}</span>
                 <span style="color: #000000; font-weight: 500;">📍 {p.location}</span>
                 <span style="color: #000000; font-weight: 500;">💰 {p.income:,} PLN</span>
                 {f'<span style="color: #000000; font-weight: 500;">💼 {p.occupation}</span>' if p.occupation else ''}
@@ -688,6 +701,7 @@ def _generate_html_en(
     for i, r in enumerate(responses, 1):
         p = r.persona
         score_color = _get_score_color(r.likert_score)
+        gender_label = _localized_gender_label(p.gender, Language.EN)
         responses_html += f"""
         <div style="background: #ffffff; border-radius: 0.75rem; padding: 1rem; margin-bottom: 1rem; border-left: 4px solid #1e3a5f; border: 1px solid #e5e7eb;">
             <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
@@ -697,7 +711,7 @@ def _generate_html_en(
             </div>
             <div style="display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 0.75rem; font-size: 0.875rem;">
                 <span style="color: #000000; font-weight: 500;">🎂 {p.age} y.o.</span>
-                <span style="color: #000000; font-weight: 500;">👤 {p.gender}</span>
+                <span style="color: #000000; font-weight: 500;">👤 {gender_label}</span>
                 <span style="color: #000000; font-weight: 500;">📍 {p.location}</span>
                 <span style="color: #000000; font-weight: 500;">💰 ${p.income:,}</span>
                 {f'<span style="color: #000000; font-weight: 500;">💼 {p.occupation}</span>' if p.occupation else ''}

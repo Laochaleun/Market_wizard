@@ -1,3 +1,12 @@
+v0.5.1 (2026-02-07)
+- Fixed gender mapping bug in UI: selecting `K` (PL) now correctly maps to backend `F` instead of falling back to "all genders".
+- Localized respondent gender labels in generated reports (`K/M` for Polish, `F/M` for English).
+- Added end-to-end regional targeting (voivodeship) in UI and persona generation (`target_audience.region`).
+- Region now affects persona location selection (when matching cities are available) and regional income multiplier calculation.
+- Added bilingual demographic dropdown normalization (PL/EN labels) with preserved values on language switch.
+- Unified demographic filters across analyses: A/B test, price analysis, and focus group now reuse the same target audience settings as main simulation.
+- Added automated tests for: gender mapping, report label localization, and region-aware persona generation.
+
 v0.5.0 (2026-02-01)
 - Aligned SSR computation with the reference implementation (cosine scaled to [0,1], epsilon on min only, temperature applied post-PMF).
 - Set SSR defaults to temperature=1.0 and epsilon=0.0.

@@ -545,6 +545,45 @@ class PersonaManager:
         if self.use_gus_demographics:
             self.gus_client = GUSClient()
 
+    def _normalize_region(self, region: str | None) -> str | None:
+        value = (region or "").strip().lower()
+        return value or None
+
+    def _location_matches_region(self, location: str, region: str) -> bool:
+        mapped = CITY_TO_REGION.get(location)
+        if mapped:
+            return mapped.lower() == region
+
+        # Rural labels are stored as phrases (e.g., "wieś na Mazowszu").
+        rural_region_markers = {
+            "mazows": "mazowieckie",
+            "małopols": "małopolskie",
+            "podkarpac": "podkarpackie",
+            "śląsk": "śląskie",
+            "wielkopol": "wielkopolskie",
+            "pomorz": "pomorskie",
+            "warm": "warmińsko-mazurskie",
+            "podlasi": "podlaskie",
+            "świętokrz": "świętokrzyskie",
+            "lubelszcz": "lubelskie",
+            "łódzk": "łódzkie",
+            "dolnym ślą": "dolnośląskie",
+        }
+        lowered = location.lower()
+        for marker, marker_region in rural_region_markers.items():
+            if marker in lowered:
+                return marker_region == region
+        return False
+
+    def _pick_location(self, lang: Language, location_type: str, region: str | None) -> str:
+        candidates = list(LOCATIONS[lang][location_type])
+        if not region:
+            return random.choice(candidates)
+        regional_candidates = [c for c in candidates if self._location_matches_region(c, region)]
+        if regional_candidates:
+            return random.choice(regional_candidates)
+        return random.choice(candidates)
+
     def generate_persona(
         self,
         profile: DemographicProfile | None = None,
@@ -589,9 +628,10 @@ class PersonaManager:
             location_type = profile.location_type
         else:
             location_type = gus.sample_location_type()
+        region = self._normalize_region(profile.region)
 
-        # Get location from i18n data
-        location = random.choice(LOCATIONS[lang][location_type])
+        # Get location from i18n data with optional region filter.
+        location = self._pick_location(lang, location_type, region)
 
         # Select occupation appropriate for age (using population weights)
         occupation_data = self._select_occupation_for_age(age, gender)
@@ -604,7 +644,14 @@ class PersonaManager:
             income = random.randint(income_range[0], income_range[1])
         else:
             # Use GUS 2024 based income with all modifiers
-            income = self._calculate_income(age, occupation_data, gender, location_type, location)
+            income = self._calculate_income(
+                age,
+                occupation_data,
+                gender,
+                location_type,
+                location,
+                region=region,
+            )
 
         # Generate name, education from i18n data
         name = random.choice(FIRST_NAMES[lang][gender])
@@ -651,9 +698,10 @@ class PersonaManager:
                 ["metropolis", "large_city", "medium_city", "small_city", "rural"],
                 weights=[0.15, 0.20, 0.20, 0.20, 0.25],
             )[0]
+        region = self._normalize_region(profile.region)
 
-        # Determine location
-        location = random.choice(LOCATIONS[lang][location_type])
+        # Determine location with optional region filter.
+        location = self._pick_location(lang, location_type, region)
 
         # Select occupation appropriate for age (using population weights)
         occupation_data = self._select_occupation_for_age(age, gender)
@@ -666,7 +714,14 @@ class PersonaManager:
             income = random.randint(income_range[0], income_range[1])
         else:
             # Use GUS 2024 based income with all modifiers
-            income = self._calculate_income(age, occupation_data, gender, location_type, location)
+            income = self._calculate_income(
+                age,
+                occupation_data,
+                gender,
+                location_type,
+                location,
+                region=region,
+            )
 
         # Generate name, education
         name = random.choice(FIRST_NAMES[lang][gender])
@@ -746,7 +801,8 @@ class PersonaManager:
         occupation: dict, 
         gender: str = "M",
         location_type: str = "urban",
-        location: str | None = None
+        location: str | None = None,
+        region: str | None = None,
     ) -> int:
         """
         Calculate realistic income using GUS 2024 data with modifiers.
@@ -816,7 +872,7 @@ class PersonaManager:
         # 3. Regional factor (if location is a known city)
         regional_factor = 1.0
         if location:
-            regional_factor = get_regional_multiplier(location, None)
+            regional_factor = get_regional_multiplier(location, region)
         
         # Combine factors
         final_income = base_income * gender_factor * location_factor * regional_factor

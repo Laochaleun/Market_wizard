@@ -128,6 +128,7 @@ curl -X DELETE http://localhost:8000/api/v1/projects/<ID>
 | 💰 **Analiza cenowa** | Krzywa popytu i elastyczność cenowa |
 | 🎯 **Focus Group** | Wirtualne grupy fokusowe z dyskusją multi-agent |
 | 👥 **Dane GUS** | Realistyczne rozkłady demograficzne Polski |
+| 🗺️ **Filtr regionu (województwo)** | Targetowanie respondentów wg województwa (16 regionów GUS) |
 | 📄 **Raporty HTML** | Pełne raporty z wykresami i wszystkimi odpowiedziami |
 
 ## 🗂️ Struktura projektu
@@ -208,6 +209,11 @@ Każda persona ma przypisane:
 - **Zawód** - wybierany z wagami populacyjnymi (GUS BAEL)
 - **Dochód netto** - obliczany na podstawie zawodu z modyfikatorami
 - **Lokalizacja** - miasto/wieś z wpływem na dochód
+- **Region (województwo)** - opcjonalny filtr targetowania respondentów
+
+> Ustawienia demograficzne z panelu symulacji (wiek, płeć, dochód, lokalizacja, region)
+> są współdzielone przez **Symulację SSR, A/B test, analizę cenową i Focus Group**.
+> Wyjątek: liczba uczestników i liczba rund Focus Group są ustawiane osobno.
 
 ### Wagi populacyjne zawodów
 

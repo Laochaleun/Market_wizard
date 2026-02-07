@@ -18,6 +18,7 @@ import gradio as gr
 from gradio import processing_utils, utils as gr_utils
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 
 # Add backend to path
 import sys
@@ -79,14 +80,16 @@ def get_lang(lang_code: str) -> Language:
     return Language.EN if lang_code == "English" else Language.PL
 
 
-def create_histogram_data(distribution: dict, lang: Language) -> pd.DataFrame:
-    """Convert distribution dict to DataFrame for plotting."""
+def create_histogram_chart(distribution: dict, lang: Language) -> go.Figure:
+    """Convert distribution dict to a Plotly bar chart."""
     if lang == Language.PL:
         labels = ["1-Nie", "2-Raczej nie", "3-Ani tak, ani nie", "4-Raczej tak", "5-Tak"]
-        col_x, col_y = "Odpowiedź", "Procent"
+        x_title, y_title = "Odpowiedź", "Procent respondentów"
+        chart_title = "Purchase Intent Distribution / Rozkład intencji zakupu"
     else:
         labels = ["1-No", "2-Probably not", "3-Neutral", "4-Probably yes", "5-Yes"]
-        col_x, col_y = "Response", "Percent"
+        x_title, y_title = "Response", "Percent"
+        chart_title = "Purchase Intent Distribution / Rozkład intencji zakupu"
     
     values = [
         distribution.get("scale_1", 0) * 100,
@@ -95,7 +98,54 @@ def create_histogram_data(distribution: dict, lang: Language) -> pd.DataFrame:
         distribution.get("scale_4", 0) * 100,
         distribution.get("scale_5", 0) * 100,
     ]
-    return pd.DataFrame({col_x: labels, col_y: values})
+    colors = ["#1e3a5f", "#2d5a87", "#4a7c9b", "#6b9db8", "#8ebfd4"]
+
+    max_val = max(values) if values else 0
+    y_max = max(5, max_val * 1.2) if max_val > 0 else 100
+
+    fig = go.Figure(
+        data=[
+            go.Bar(
+                x=labels,
+                y=values,
+                marker_color=colors,
+                text=[f"{v:.1f}%" for v in values],
+                textposition="outside",
+                cliponaxis=False,
+                hovertemplate="%{x}: %{y:.1f}%<extra></extra>",
+            )
+        ]
+    )
+    fig.update_layout(
+        title=chart_title,
+        height=300,
+        autosize=True,
+        width=None,
+        margin=dict(l=40, r=20, t=50, b=40),
+        yaxis=dict(
+            title=y_title,
+            range=[0, y_max],
+            ticksuffix="%",
+            gridcolor="rgba(0,0,0,0.08)",
+            zerolinecolor="rgba(0,0,0,0.2)",
+            linecolor="rgba(0,0,0,0.4)",
+        ),
+        xaxis=dict(
+            title=x_title,
+            linecolor="rgba(0,0,0,0.4)",
+        ),
+        showlegend=False,
+        plot_bgcolor="#ffffff",
+        paper_bgcolor="#ffffff",
+        font=dict(color="#000000"),
+    )
+    fig.update_layout(
+        dragmode=False,
+        modebar=dict(
+            remove=["zoom", "pan", "select", "lasso", "zoomIn", "zoomOut", "autoScale", "resetScale", "toImage"]
+        ),
+    )
+    return fig
 
 
 def format_opinion(agent_response, lang: Language) -> str:
@@ -346,6 +396,7 @@ def build_project_info(project: dict, lang: Language) -> str:
     gender = audience.get("gender")
     income_level = audience.get("income_level")
     location_type = audience.get("location_type")
+    region = audience.get("region")
 
     if lang == Language.PL:
         gender_label = "Wszystkie" if not gender else ("K" if gender == "F" else gender)
@@ -367,6 +418,7 @@ def build_project_info(project: dict, lang: Language) -> str:
         }
         income_label = income_map.get(income_level, "Wszystkie")
         location_label = location_map.get(location_type, "Wszystkie")
+        region_label = region or "Wszystkie regiony"
         age_label = f"{audience.get('age_min', '-')}-{audience.get('age_max', '-')}"
         research = project.get("research") or {}
         research_items = []
@@ -385,7 +437,7 @@ def build_project_info(project: dict, lang: Language) -> str:
             f"**Utworzono:** {created_at}\n\n"
             f"**Zaktualizowano:** {updated_at}\n\n"
             f"**Grupa docelowa:** wiek {age_label}, płeć {gender_label}, "
-            f"dochód {income_label}, lokalizacja {location_label}\n\n"
+            f"dochód {income_label}, lokalizacja {location_label}, region {region_label}\n\n"
             f"**Zapisane badania:** {research_label}\n"
         )
 
@@ -408,6 +460,7 @@ def build_project_info(project: dict, lang: Language) -> str:
     }
     income_label = income_map.get(income_level, "All")
     location_label = location_map.get(location_type, "All")
+    region_label = region or "All regions"
     age_label = f"{audience.get('age_min', '-')}-{audience.get('age_max', '-')}"
     research = project.get("research") or {}
     research_items = []
@@ -426,7 +479,7 @@ def build_project_info(project: dict, lang: Language) -> str:
         f"**Created:** {created_at}\n\n"
         f"**Updated:** {updated_at}\n\n"
         f"**Target audience:** age {age_label}, gender {gender_label}, "
-        f"income {income_label}, location {location_label}\n\n"
+        f"income {income_label}, location {location_label}, region {region_label}\n\n"
         f"**Saved research:** {research_label}\n"
     )
 
@@ -436,6 +489,86 @@ def get_project_store() -> ProjectStore:
     return ProjectStore(base_dir=PROJECT_BASE_DIR)
 
 
+INCOME_CHOICES = {
+    Language.PL: [
+        "Wszystkie",
+        "Najniższy (do 3500 PLN)",
+        "Niski (3500-5000 PLN)",
+        "Średni (5000-7000 PLN)",
+        "Wysoki (7000-10000 PLN)",
+        "Najwyższy (10000+ PLN)",
+    ],
+    Language.EN: [
+        "All",
+        "Very low (up to 3500 PLN)",
+        "Low (3500-5000 PLN)",
+        "Medium (5000-7000 PLN)",
+        "High (7000-10000 PLN)",
+        "Very high (10000+ PLN)",
+    ],
+}
+
+LOCATION_CHOICES = {
+    Language.PL: [
+        "Wszystkie",
+        "Wieś (41% populacji)",
+        "Małe miasto do 20 tys. (12%)",
+        "Średnie miasto 20-100 tys. (18%)",
+        "Duże miasto 100-500 tys. (16%)",
+        "Metropolia 500 tys.+ (13%)",
+    ],
+    Language.EN: [
+        "All",
+        "Rural (41% population)",
+        "Small city up to 20k (12%)",
+        "Medium city 20k-100k (18%)",
+        "Large city 100k-500k (16%)",
+        "Metropolis 500k+ (13%)",
+    ],
+}
+
+REGION_CHOICES = {
+    Language.PL: [
+        "Wszystkie regiony",
+        "dolnośląskie",
+        "kujawsko-pomorskie",
+        "lubelskie",
+        "lubuskie",
+        "łódzkie",
+        "małopolskie",
+        "mazowieckie",
+        "opolskie",
+        "podkarpackie",
+        "podlaskie",
+        "pomorskie",
+        "śląskie",
+        "świętokrzyskie",
+        "warmińsko-mazurskie",
+        "wielkopolskie",
+        "zachodniopomorskie",
+    ],
+    Language.EN: [
+        "All regions",
+        "dolnośląskie",
+        "kujawsko-pomorskie",
+        "lubelskie",
+        "lubuskie",
+        "łódzkie",
+        "małopolskie",
+        "mazowieckie",
+        "opolskie",
+        "podkarpackie",
+        "podlaskie",
+        "pomorskie",
+        "śląskie",
+        "świętokrzyskie",
+        "warmińsko-mazurskie",
+        "wielkopolskie",
+        "zachodniopomorskie",
+    ],
+}
+
+
 def mark_dirty(
     product_description: str,
     age_min: int,
@@ -443,6 +576,7 @@ def mark_dirty(
     gender: str,
     income_level: str,
     location_type: str,
+    region: str,
     n_agents: int,
     enable_web_search: bool,
     temperature: float,
@@ -472,6 +606,7 @@ def mark_dirty(
         "gender": "Wszystkie",
         "income_level": "Wszystkie",
         "location_type": "Wszystkie",
+        "region": None,
         "n_agents": 20,
         "enable_web_search": True,
         "temperature": 1.0,
@@ -497,6 +632,7 @@ def mark_dirty(
         "gender": gender,
         "income_level": income_level,
         "location_type": location_type,
+        "region": normalize_region_value(region),
         "n_agents": int(n_agents),
         "enable_web_search": bool(enable_web_search),
         "temperature": float(temperature),
@@ -530,6 +666,7 @@ def normalize_target_audience(
     gender: str,
     income_level: str,
     location_type: str,
+    region: str,
 ) -> dict:
     """Normalize UI inputs to stored demographic fields."""
     all_values = {"All", "Wszystkie"}
@@ -569,14 +706,8 @@ def normalize_target_audience(
     income = income_map.get(income_level) if income_level not in all_values else None
     location = location_map.get(location_type) if location_type not in all_values else None
 
-    if gender in ["M", "F"]:
-        gender_value = gender
-    elif gender == "K":
-        gender_value = "F"
-    elif gender in all_values:
-        gender_value = None
-    else:
-        gender_value = None
+    gender_value = normalize_gender_value(gender)
+    region_value = normalize_region_value(region)
 
     return {
         "age_min": age_min,
@@ -584,7 +715,165 @@ def normalize_target_audience(
         "gender": gender_value,
         "income_level": income,
         "location_type": location,
+        "region": region_value,
     }
+
+
+def normalize_gender_value(gender: Optional[str]) -> Optional[str]:
+    """Normalize UI gender value to backend format: M/F/None."""
+    value = (gender or "").strip().upper()
+    if value in {"M", "F"}:
+        return value
+    if value == "K":
+        return "F"
+    if value in {"ALL", "WSZYSTKIE", "WSZYSCY", ""}:
+        return None
+    return None
+
+
+def normalize_region_value(region: Optional[str]) -> Optional[str]:
+    """Normalize UI region value to backend format: voivodeship key or None."""
+    value = (region or "").strip().lower()
+    if value in {"", "all", "all regions", "wszystkie", "wszystkie regiony"}:
+        return None
+    valid_regions = {r.lower() for r in REGION_CHOICES[Language.PL][1:]}
+    if value in valid_regions:
+        return value
+    return None
+
+
+def update_demographic_dropdowns(
+    lang_code: str,
+    current_gender: str,
+    current_income: str,
+    current_location: str,
+    current_region: str,
+):
+    """Update demographic dropdown choices and preserve equivalent selections."""
+    lang = get_lang(lang_code)
+    all_gender = "All" if lang == Language.EN else "Wszystkie"
+    all_region = "All regions" if lang == Language.EN else "Wszystkie regiony"
+
+    gender_norm = normalize_gender_value(current_gender)
+    gender_value = all_gender
+    if gender_norm:
+        if gender_norm == "F":
+            gender_value = "F" if lang == Language.EN else "K"
+        elif gender_norm == "M":
+            gender_value = "M"
+
+    income_level = normalize_income_value(current_income)
+    income_value = income_label_from_level(income_level, lang)
+
+    location_type = normalize_location_value(current_location)
+    location_value = location_label_from_type(location_type, lang)
+
+    region_value = normalize_region_value(current_region)
+    region_ui_value = region_value if region_value else all_region
+
+    gender_choices = [all_gender, "M", "F"] if lang == Language.EN else [all_gender, "M", "K"]
+    return (
+        gr.update(choices=gender_choices, value=gender_value),
+        gr.update(choices=INCOME_CHOICES[lang], value=income_value),
+        gr.update(choices=LOCATION_CHOICES[lang], value=location_value),
+        gr.update(choices=REGION_CHOICES[lang], value=region_ui_value),
+    )
+
+
+def normalize_income_value(income_level: Optional[str]) -> Optional[str]:
+    all_values = {"All", "Wszystkie"}
+    income_map = {
+        "Najniższy (do 3500 PLN)": "very_low",
+        "Niski (3500-5000 PLN)": "low",
+        "Średni (5000-7000 PLN)": "medium",
+        "Wysoki (7000-10000 PLN)": "high",
+        "Najwyższy (10000+ PLN)": "very_high",
+        "Very low (up to 3500 PLN)": "very_low",
+        "Low (3500-5000 PLN)": "low",
+        "Medium (5000-7000 PLN)": "medium",
+        "High (7000-10000 PLN)": "high",
+        "Very high (10000+ PLN)": "very_high",
+        "Very Low": "very_low",
+        "Low": "low",
+        "Medium": "medium",
+        "High": "high",
+        "Very High": "very_high",
+        "Niski": "low",
+        "Średni": "medium",
+        "Wysoki": "high",
+    }
+    if income_level in all_values or not income_level:
+        return None
+    return income_map.get(income_level)
+
+
+def normalize_location_value(location_type: Optional[str]) -> Optional[str]:
+    all_values = {"All", "Wszystkie"}
+    loc_map = {
+        "Wieś (41% populacji)": "rural",
+        "Małe miasto do 20 tys. (12%)": "small_city",
+        "Średnie miasto 20-100 tys. (18%)": "medium_city",
+        "Duże miasto 100-500 tys. (16%)": "large_city",
+        "Metropolia 500 tys.+ (13%)": "metropolis",
+        "Rural (41% population)": "rural",
+        "Small city up to 20k (12%)": "small_city",
+        "Medium city 20k-100k (18%)": "medium_city",
+        "Large city 100k-500k (16%)": "large_city",
+        "Metropolis 500k+ (13%)": "metropolis",
+        "Urban": "large_city",
+        "Suburban": "medium_city",
+        "Rural": "rural",
+        "Miasto": "large_city",
+        "Przedmieścia": "medium_city",
+        "Wieś": "rural",
+    }
+    if location_type in all_values or not location_type:
+        return None
+    return loc_map.get(location_type)
+
+
+def income_label_from_level(income_level: Optional[str], lang: Language) -> str:
+    mapping = {
+        Language.PL: {
+            "very_low": "Najniższy (do 3500 PLN)",
+            "low": "Niski (3500-5000 PLN)",
+            "medium": "Średni (5000-7000 PLN)",
+            "high": "Wysoki (7000-10000 PLN)",
+            "very_high": "Najwyższy (10000+ PLN)",
+        },
+        Language.EN: {
+            "very_low": "Very low (up to 3500 PLN)",
+            "low": "Low (3500-5000 PLN)",
+            "medium": "Medium (5000-7000 PLN)",
+            "high": "High (7000-10000 PLN)",
+            "very_high": "Very high (10000+ PLN)",
+        },
+    }
+    return mapping[lang].get(income_level, INCOME_CHOICES[lang][0])
+
+
+def location_label_from_type(location_type: Optional[str], lang: Language) -> str:
+    mapping = {
+        Language.PL: {
+            "rural": "Wieś (41% populacji)",
+            "small_city": "Małe miasto do 20 tys. (12%)",
+            "medium_city": "Średnie miasto 20-100 tys. (18%)",
+            "large_city": "Duże miasto 100-500 tys. (16%)",
+            "metropolis": "Metropolia 500 tys.+ (13%)",
+            "urban": "Duże miasto 100-500 tys. (16%)",
+            "suburban": "Średnie miasto 20-100 tys. (18%)",
+        },
+        Language.EN: {
+            "rural": "Rural (41% population)",
+            "small_city": "Small city up to 20k (12%)",
+            "medium_city": "Medium city 20k-100k (18%)",
+            "large_city": "Large city 100k-500k (16%)",
+            "metropolis": "Metropolis 500k+ (13%)",
+            "urban": "Large city 100k-500k (16%)",
+            "suburban": "Medium city 20k-100k (18%)",
+        },
+    }
+    return mapping[lang].get(location_type, LOCATION_CHOICES[lang][0])
 
 
 def autosave_simulation_project(
@@ -698,33 +987,14 @@ def autosave_focus_group_project(
 def target_audience_to_ui(
     lang: Language,
     target_audience: dict | None,
-) -> tuple[int, int, str, str, str]:
+) -> tuple[int, int, str, str, str, str]:
     """Map stored target audience fields to UI labels."""
     default_age_min = 25
     default_age_max = 45
-    # UI choices are fixed in Polish in this layout.
-    default_gender = "Wszystkie"
-    default_income = "Wszystkie"
-    default_location = "Wszystkie"
-    # GUS 2024-based income categories with PLN ranges
-    income_map = {
-        "very_low": "Najniższy (do 3500 PLN)",
-        "low": "Niski (3500-5000 PLN)",
-        "medium": "Średni (5000-7000 PLN)",
-        "high": "Wysoki (7000-10000 PLN)",
-        "very_high": "Najwyższy (10000+ PLN)",
-    }
-    # GUS 2024-based location categories
-    location_map = {
-        "rural": "Wieś (41% populacji)",
-        "small_city": "Małe miasto do 20 tys. (12%)",
-        "medium_city": "Średnie miasto 20-100 tys. (18%)",
-        "large_city": "Duże miasto 100-500 tys. (16%)",
-        "metropolis": "Metropolia 500 tys.+ (13%)",
-        # Legacy support
-        "urban": "Duże miasto 100-500 tys. (16%)",
-        "suburban": "Średnie miasto 20-100 tys. (18%)",
-    }
+    default_gender = "All" if lang == Language.EN else "Wszystkie"
+    default_income = INCOME_CHOICES[lang][0]
+    default_location = LOCATION_CHOICES[lang][0]
+    default_region = REGION_CHOICES[lang][0]
 
     if not target_audience:
         return (
@@ -733,6 +1003,7 @@ def target_audience_to_ui(
             default_gender,
             default_income,
             default_location,
+            default_region,
         )
 
     age_min = int(target_audience.get("age_min", default_age_min))
@@ -740,16 +1011,19 @@ def target_audience_to_ui(
 
     gender_raw = target_audience.get("gender")
     if gender_raw == "F":
-        gender = "K"
+        gender = "F" if lang == Language.EN else "K"
     elif gender_raw == "M":
         gender = "M"
     else:
         gender = default_gender
 
-    income_level = income_map.get(target_audience.get("income_level"), default_income)
-    location_type = location_map.get(target_audience.get("location_type"), default_location)
+    income_level = income_label_from_level(target_audience.get("income_level"), lang)
+    location_type = location_label_from_type(target_audience.get("location_type"), lang)
+    region_raw = (target_audience.get("region") or "").strip().lower()
+    valid_regions = {r.lower() for r in REGION_CHOICES[Language.PL][1:]}
+    region = region_raw if region_raw in valid_regions else default_region
 
-    return age_min, age_max, gender, income_level, location_type
+    return age_min, age_max, gender, income_level, location_type, region
 
 
 # === URL Detection and Product Extraction ===
@@ -939,6 +1213,7 @@ async def run_simulation_async(
     gender: Optional[str],
     income_level: Optional[str],
     location_type: Optional[str],
+    region: Optional[str],
     enable_web_search: bool = True,
     temperature: float = 1.0,
     project_id: str | None = None,
@@ -1010,53 +1285,19 @@ async def run_simulation_async(
                         gr.update(),
                         gr.update(),
                     )
-        # Handle language-specific "All" values
-        all_value = "All" if lang == Language.EN else "Wszystkie"
-        
-        # Map income level - GUS 2024 based categories
-        income_map = {
-            # New GUS-based categories with ranges
-            "Najniższy (do 3500 PLN)": "very_low",
-            "Niski (3500-5000 PLN)": "low",
-            "Średni (5000-7000 PLN)": "medium",
-            "Wysoki (7000-10000 PLN)": "high",
-            "Najwyższy (10000+ PLN)": "very_high",
-            # Legacy/English mappings
-            "Very Low": "very_low", "Low": "low", "Medium": "medium", 
-            "High": "high", "Very High": "very_high",
-            "Niski": "low", "Średni": "medium", "Wysoki": "high",
-        }
-        income = income_map.get(income_level) if income_level != all_value else None
-        
-        # Map location type
-        loc_map = {
-            # GUS 2024 categories
-            "Wieś (41% populacji)": "rural",
-            "Małe miasto do 20 tys. (12%)": "small_city",
-            "Średnie miasto 20-100 tys. (18%)": "medium_city",
-            "Duże miasto 100-500 tys. (16%)": "large_city",
-            "Metropolia 500 tys.+ (13%)": "metropolis",
-            # Legacy/English mappings
-            "Urban": "large_city", "Suburban": "medium_city", "Rural": "rural",
-            "Miasto": "large_city", "Przedmieścia": "medium_city", "Wieś": "rural",
-        }
-        location = loc_map.get(location_type) if location_type != all_value else None
+        income = normalize_income_value(income_level)
+        location = normalize_location_value(location_type)
+        region_value = normalize_region_value(region)
         
         # Build demographic profile
         profile = DemographicProfile(
             age_min=age_min,
             age_max=age_max,
-            gender=gender if gender not in [all_value, "M", "F"] else (gender if gender in ["M", "F"] else None),
+            gender=normalize_gender_value(gender),
             income_level=income,
             location_type=location,
+            region=region_value,
         )
-        # Fix gender handling
-        if gender in ["M", "F"]:
-            profile.gender = gender
-        elif gender != all_value:
-            profile.gender = None
-        else:
-            profile.gender = None
 
         search_msg = " + Google Search" if enable_web_search else ""
         progress(0.1, desc=f"Generating personas{search_msg}..." if lang == Language.EN else f"Generowanie person{search_msg}...")
@@ -1076,7 +1317,7 @@ async def run_simulation_async(
 
         # Prepare histogram
         dist = result.aggregate_distribution.model_dump()
-        chart_df = create_histogram_data(dist, lang)
+        chart_fig = create_histogram_chart(dist, lang)
 
         summary = build_simulation_summary(result, lang)
         opinions = build_simulation_opinions(result, lang)
@@ -1130,7 +1371,7 @@ async def run_simulation_async(
                 extracted_full = f"**Full description:** {extracted_full}"
 
         return (
-            chart_df,
+            chart_fig,
             summary,
             opinions,
             status_msg,
@@ -1468,6 +1709,12 @@ async def run_ab_test_async(
     variant_a: str,
     variant_b: str,
     n_agents: int,
+    age_min: int,
+    age_max: int,
+    gender: Optional[str],
+    income_level: Optional[str],
+    location_type: Optional[str],
+    region: Optional[str],
     enable_web_search: bool = True,
     progress=gr.Progress(),
 ):
@@ -1475,17 +1722,29 @@ async def run_ab_test_async(
     lang = get_lang(lang_code)
     
     if not variant_a.strip() or not variant_b.strip():
-        return get_label(lang, "error_no_variants"), "❌"
+        return get_label(lang, "error_no_variants"), "❌", gr.update()
 
     progress(0, desc="Running A/B test..." if lang == Language.EN else "Uruchamianie testu A/B...")
 
     try:
+        target_audience = DemographicProfile(
+            **normalize_target_audience(
+                lang,
+                age_min,
+                age_max,
+                gender or "",
+                income_level or "",
+                location_type or "",
+                region or "",
+            )
+        )
         engine = ABTestEngine(language=lang)
         from uuid import uuid4
         result = await engine.run_ab_test(
             project_id=uuid4(),
             variant_a=variant_a,
             variant_b=variant_b,
+            target_audience=target_audience,
             n_agents=n_agents,
             enable_web_search=enable_web_search,
         )
@@ -1498,6 +1757,7 @@ async def run_ab_test_async(
             "variant_a": variant_a,
             "variant_b": variant_b,
             "n_agents": n_agents,
+            "target_audience": target_audience.model_dump(),
             "enable_web_search": enable_web_search,
         }
 
@@ -1528,6 +1788,12 @@ async def run_price_analysis_async(
     price_max: float,
     n_points: int,
     n_agents: int,
+    age_min: int,
+    age_max: int,
+    gender: Optional[str],
+    income_level: Optional[str],
+    location_type: Optional[str],
+    region: Optional[str],
     enable_web_search: bool = True,
     progress=gr.Progress(),
 ):
@@ -1535,7 +1801,7 @@ async def run_price_analysis_async(
     lang = get_lang(lang_code)
     
     if not product_description.strip():
-        return get_label(lang, "error_no_product"), None, "❌"
+        return get_label(lang, "error_no_product"), None, "❌", gr.update()
 
     progress(0, desc="Analyzing price sensitivity..." if lang == Language.EN else "Analizowanie wrażliwości cenowej...")
 
@@ -1554,6 +1820,17 @@ async def run_price_analysis_async(
                 _last_extracted_url = normalized_input
         # Generate price points
         price_points = list(np.linspace(price_min, price_max, int(n_points)))
+        target_audience = DemographicProfile(
+            **normalize_target_audience(
+                lang,
+                age_min,
+                age_max,
+                gender or "",
+                income_level or "",
+                location_type or "",
+                region or "",
+            )
+        )
 
         engine = PriceSensitivityEngine(language=lang)
         from uuid import uuid4
@@ -1561,6 +1838,7 @@ async def run_price_analysis_async(
             project_id=uuid4(),
             base_product_description=product_description,
             price_points=price_points,
+            target_audience=target_audience,
             n_agents=n_agents,
             enable_web_search=enable_web_search,
         )
@@ -1575,6 +1853,7 @@ async def run_price_analysis_async(
             "price_max": price_max,
             "price_points": n_points,
             "n_agents": n_agents,
+            "target_audience": target_audience.model_dump(),
             "enable_web_search": enable_web_search,
         }
 
@@ -1605,6 +1884,12 @@ async def run_focus_group_async(
     product: str,
     n_participants: int,
     n_rounds: int,
+    age_min: int,
+    age_max: int,
+    gender: Optional[str],
+    income_level: Optional[str],
+    location_type: Optional[str],
+    region: Optional[str],
     enable_web_search: bool = True,
     project_id: str | None = None,
 ) -> tuple[str, str, str, object]:
@@ -1613,7 +1898,7 @@ async def run_focus_group_async(
     
     if not product or not product.strip():
         error_msg = "❌ Enter product description" if lang == Language.EN else "❌ Wprowadź opis produktu"
-        return "", "", error_msg
+        return "", "", error_msg, gr.update()
     
     try:
         # Process product input - extract from URL if needed
@@ -1625,18 +1910,31 @@ async def run_focus_group_async(
             else:
                 product, _ = await process_product_input(product, lang)
                 if not product:
-                    return "", "", "❌ Could not extract product from URL"
+                    return "", "", "❌ Could not extract product from URL", gr.update()
                 _last_extracted_full = product
                 _last_extracted_preview = _shorten_extracted(product, lang)
                 _last_extracted_url = normalized_input
         
         engine = FocusGroupEngine(language=lang)
         
+        target_audience = DemographicProfile(
+            **normalize_target_audience(
+                lang,
+                age_min,
+                age_max,
+                gender or "",
+                income_level or "",
+                location_type or "",
+                region or "",
+            )
+        )
+
         # Run focus group
         result = await engine.run_focus_group(
             product_description=product.strip(),
             n_participants=int(n_participants),
             n_rounds=int(n_rounds),
+            target_audience=target_audience,
             enable_web_search=enable_web_search,
         )
         
@@ -1672,6 +1970,7 @@ async def run_focus_group_async(
                 "product_description": product.strip(),
                 "n_participants": int(n_participants),
                 "n_rounds": int(n_rounds),
+                "target_audience": target_audience.model_dump(),
                 "enable_web_search": enable_web_search,
             },
             lang,
@@ -1707,7 +2006,16 @@ def run_focus_group(*args):
         "product_description": _last_fg_product,
         "n_participants": args[2] if len(args) > 2 else None,
         "n_rounds": args[3] if len(args) > 3 else None,
-        "enable_web_search": args[4] if len(args) > 4 else True,
+        "target_audience": normalize_target_audience(
+            get_lang(args[0]),
+            int(args[4]) if len(args) > 4 else 25,
+            int(args[5]) if len(args) > 5 else 45,
+            args[6] if len(args) > 6 else "Wszystkie",
+            args[7] if len(args) > 7 else "Wszystkie",
+            args[8] if len(args) > 8 else "Wszystkie",
+            args[9] if len(args) > 9 else "Wszystkie regiony",
+        ),
+        "enable_web_search": args[10] if len(args) > 10 else True,
     }
     return result
 
@@ -1800,8 +2108,8 @@ def export_focus_group(
 # === Project Management ===
 
 
-def _empty_histogram_df(lang: Language) -> pd.DataFrame:
-    return create_histogram_data(
+def _empty_histogram_chart(lang: Language) -> go.Figure:
+    return create_histogram_chart(
         {
             "scale_1": 0,
             "scale_2": 0,
@@ -1852,6 +2160,7 @@ def save_project(
     gender: str,
     income_level: str,
     location_type: str,
+    region: str,
     n_agents: int,
     enable_web_search: bool,
     temperature: float,
@@ -1937,6 +2246,7 @@ def save_project(
             gender,
             income_level,
             location_type,
+            region,
         )
 
     research = existing.get("research", {})
@@ -1983,6 +2293,7 @@ def save_project(
                 "variant_a": variant_a_input,
                 "variant_b": variant_b_input,
                 "n_agents": ab_n_agents,
+                "target_audience": target_audience,
                 "enable_web_search": ab_enable_web_search,
             }
         elif _last_ab_test_inputs is not None:
@@ -2001,6 +2312,7 @@ def save_project(
                 "price_max": price_max,
                 "price_points": price_points,
                 "n_agents": price_n_agents,
+                "target_audience": target_audience,
                 "enable_web_search": price_enable_web_search,
             }
         elif _last_price_analysis_inputs is not None:
@@ -2017,6 +2329,7 @@ def save_project(
                 "product_description": fg_product,
                 "n_participants": fg_participants,
                 "n_rounds": fg_rounds,
+                "target_audience": target_audience,
                 "enable_web_search": fg_enable_web_search,
             }
         elif _last_focus_group_inputs is not None:
@@ -2073,7 +2386,7 @@ def load_project(
     logger = logging.getLogger(__name__)
     def _no_change_updates(count: int) -> list:
         return [gr.update() for _ in range(count)]
-    total_outputs = 50
+    total_outputs = 51
     status_index = 9
 
     def _confirm_message(message: str):
@@ -2086,7 +2399,7 @@ def load_project(
         return (
             "",
             "",
-            _empty_histogram_df(lang),
+            _empty_histogram_chart(lang),
             "",
             "",
             "",
@@ -2096,7 +2409,7 @@ def load_project(
             msg,
             gr.update(visible=False),
             gr.update(visible=False),
-            *_no_change_updates(38),
+            *_no_change_updates(total_outputs - 12),
         )
 
     if project_dirty and not allow_discard:
@@ -2118,7 +2431,7 @@ def load_project(
         return (
             "",
             "",
-            _empty_histogram_df(lang),
+            _empty_histogram_chart(lang),
             "",
             "",
             "",
@@ -2128,7 +2441,7 @@ def load_project(
             msg,
             gr.update(visible=False),
             gr.update(visible=False),
-            *_no_change_updates(36),
+            *_no_change_updates(total_outputs - 12),
         )
 
     try:
@@ -2138,13 +2451,13 @@ def load_project(
 
         sim_summary = ""
         sim_opinions = ""
-        sim_chart = _empty_histogram_df(lang)
+        sim_chart = _empty_histogram_chart(lang)
         sim_payload = research.get("simulation", {})
         if sim_payload.get("result"):
             sim_result = SimulationResult.model_validate(sim_payload["result"])
             sim_summary = build_simulation_summary(sim_result, lang)
             sim_opinions = build_simulation_opinions(sim_result, lang)
-            sim_chart = create_histogram_data(sim_result.aggregate_distribution.model_dump(), lang)
+            sim_chart = create_histogram_chart(sim_result.aggregate_distribution.model_dump(), lang)
             # Restore globals for report generation
             global _last_simulation_result, _last_product_description, _last_simulation_inputs
             _last_simulation_result = sim_result
@@ -2220,7 +2533,7 @@ def load_project(
         )
 
         target_audience = sim_inputs.get("target_audience") or project.get("target_audience")
-        age_min_value, age_max_value, gender_value, income_value, location_value = (
+        age_min_value, age_max_value, gender_value, income_value, location_value, region_value = (
             target_audience_to_ui(lang, target_audience)
         )
 
@@ -2308,6 +2621,7 @@ def load_project(
         gr.update(value=gender_value),
         gr.update(value=income_value),
         gr.update(value=location_value),
+        gr.update(value=region_value),
         gr.update(value=n_agents_value),
         gr.update(value=enable_web_search_value),
         gr.update(value=temperature_value),
@@ -2359,7 +2673,7 @@ def maybe_autoload_project(
 ):
     """Auto-load project on selection if enabled."""
     if not auto_load:
-        return tuple(gr.update() for _ in range(50))
+        return tuple(gr.update() for _ in range(51))
     return load_project(lang_code, project_id, allow_discard, project_dirty)
 
 
@@ -2389,6 +2703,15 @@ def create_interface():
     with gr.Blocks(
         title="Market Wizard - Market Analyzer",
     ) as demo:
+        gr.HTML(
+            "<style>"
+            ".modebar,.modebar-container,.plotly-logo,.modebar-btn--logo{display:none !important;}"
+            ".pi-plot{background:#ffffff !important;}"
+            ".pi-plot .plotly-graph-div{width:100% !important;}"
+            ".pi-plot .plot-container{width:100% !important;}"
+            ".pi-plot .svg-container{width:100% !important;}"
+            "</style>"
+        )
         # Language selector at the top
         with gr.Row():
             gr.Markdown("# 🔮 Market Wizard")
@@ -2443,28 +2766,20 @@ def create_interface():
                                 label="Gender / Płeć",
                             )
                             income = gr.Dropdown(
-                                choices=[
-                                    "Wszystkie",
-                                    "Najniższy (do 3500 PLN)",
-                                    "Niski (3500-5000 PLN)",
-                                    "Średni (5000-7000 PLN)",
-                                    "Wysoki (7000-10000 PLN)",
-                                    "Najwyższy (10000+ PLN)",
-                                ],
+                                choices=INCOME_CHOICES[Language.PL],
                                 value="Wszystkie",
                                 label="Income / Dochód (netto)",
                             )
                             location = gr.Dropdown(
-                                choices=[
-                                    "Wszystkie",
-                                    "Wieś (41% populacji)",
-                                    "Małe miasto do 20 tys. (12%)",
-                                    "Średnie miasto 20-100 tys. (18%)",
-                                    "Duże miasto 100-500 tys. (16%)",
-                                    "Metropolia 500 tys.+ (13%)",
-                                ],
+                                choices=LOCATION_CHOICES[Language.PL],
                                 value="Wszystkie",
                                 label="Lokalizacja / Location (GUS 2024)",
+                            )
+                        with gr.Row():
+                            region = gr.Dropdown(
+                                choices=REGION_CHOICES[Language.PL],
+                                value="Wszystkie regiony",
+                                label="Region / Voivodeship (GUS 2024)",
                             )
 
                         n_agents = gr.Slider(5, 100, value=20, step=5, label="Number of agents / Liczba agentów")
@@ -2491,11 +2806,10 @@ def create_interface():
 
                     with gr.Column(scale=1):
                         summary_output = gr.Markdown(label="Summary / Podsumowanie")
-                        chart_output = gr.BarPlot(
-                            x="Odpowiedź",
-                            y="Procent",
-                            title="Purchase Intent Distribution / Rozkład intencji zakupu",
-                            height=300,
+                        chart_output = gr.Plot(
+                            label="",
+                            show_label=False,
+                            elem_classes="pi-plot",
                         )
 
                 with gr.Accordion("📝 Sample Agent Opinions / Przykładowe opinie", open=False):
@@ -2571,7 +2885,19 @@ def create_interface():
 
                 ab_run_btn.click(
                     fn=run_ab_test,
-                    inputs=[language_select, variant_a_input, variant_b_input, ab_n_agents, ab_enable_web_search],
+                    inputs=[
+                        language_select,
+                        variant_a_input,
+                        variant_b_input,
+                        ab_n_agents,
+                        age_min,
+                        age_max,
+                        gender,
+                        income,
+                        location,
+                        region,
+                        ab_enable_web_search,
+                    ],
                     outputs=[ab_result, ab_status, project_dirty],
                 )
 
@@ -2618,6 +2944,12 @@ def create_interface():
                         price_max,
                         price_points,
                         price_n_agents,
+                        age_min,
+                        age_max,
+                        gender,
+                        income,
+                        location,
+                        region,
                         price_enable_web_search,
                     ],
                     outputs=[price_result, price_chart, price_status, project_dirty],
@@ -2680,6 +3012,12 @@ def create_interface():
                         fg_product,
                         fg_participants,
                         fg_rounds,
+                        age_min,
+                        age_max,
+                        gender,
+                        income,
+                        location,
+                        region,
                         fg_enable_web_search,
                         project_state,
                     ],
@@ -2765,11 +3103,10 @@ def create_interface():
 
                 with gr.Accordion("📊 Simulation / Symulacja", open=False):
                     saved_sim_summary = gr.Markdown()
-                    saved_sim_chart = gr.BarPlot(
-                        x="Odpowiedź",
-                        y="Procent",
-                        title="Purchase Intent Distribution / Rozkład intencji zakupu",
-                        height=300,
+                    saved_sim_chart = gr.Plot(
+                        label="",
+                        show_label=False,
+                        elem_classes="pi-plot",
                     )
                     saved_sim_opinions = gr.Markdown()
 
@@ -2822,6 +3159,7 @@ def create_interface():
                         gender,
                         income,
                         location,
+                        region,
                         n_agents,
                         enable_web_search,
                         temperature,
@@ -2867,6 +3205,7 @@ def create_interface():
                         gender,
                         income,
                         location,
+                        region,
                         n_agents,
                         enable_web_search,
                         temperature,
@@ -2921,6 +3260,7 @@ def create_interface():
                         gender,
                         income,
                         location,
+                        region,
                         n_agents,
                         enable_web_search,
                         temperature,
@@ -2966,6 +3306,7 @@ def create_interface():
                         gender,
                         income,
                         location,
+                        region,
                         n_agents,
                         enable_web_search,
                         temperature,
@@ -3012,6 +3353,7 @@ def create_interface():
                         gender,
                         income,
                         location,
+                        region,
                         n_agents,
                         enable_web_search,
                         temperature,
@@ -3072,6 +3414,7 @@ def create_interface():
                         gender,
                         income,
                         location,
+                        region,
                         n_agents,
                         enable_web_search,
                         temperature,
@@ -3169,6 +3512,7 @@ def create_interface():
             gender,
             income,
             location,
+            region,
             n_agents,
             enable_web_search,
             temperature,
@@ -3211,6 +3555,11 @@ def create_interface():
             inputs=[language_select],
             outputs=[extract_url_btn],
         )
+        language_select.change(
+            fn=update_demographic_dropdowns,
+            inputs=[language_select, gender, income, location, region],
+            outputs=[gender, income, location, region],
+        )
 
         gr.Markdown(
             """
@@ -3233,6 +3582,7 @@ def create_interface():
                 gender,
                 income,
                 location,
+                region,
                 enable_web_search,
                 temperature,
                 project_state,
