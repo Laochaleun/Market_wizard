@@ -1,5 +1,11 @@
 # Session Notes: HF Spaces File Download Issue
 
+## Reference paper location (local context)
+- Main methodological reference for this app:
+  - arXiv: `2510.08338v3`
+- Optional local copy (kept outside git, via `.gitignore`):
+  - `/Users/pawel/Market_wizard/.local_context/papers/2510.08338v3.pdf`
+
 ## Problem Description
 Reports (HTML and PDF) are generated successfully on Hugging Face Spaces but cannot be downloaded by users. The error message shown is "File wasn't available on site".
 

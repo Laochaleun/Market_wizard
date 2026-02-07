@@ -11,6 +11,9 @@ pinned: false
 
 Analizator rynku i produktu oparty na metodologii **SSR (Semantic Similarity Rating)** z badania [arxiv:2510.08338](https://arxiv.org/abs/2510.08338).
 
+> Lokalna kopia referencyjnego papera (opcjonalna, poza gitem):
+> `/Users/pawel/Market_wizard/.local_context/papers/2510.08338v3.pdf`
+
 ## 🎯 Co to robi?
 
 Market Wizard symuluje reakcje konsumentów na produkt **bez przeprowadzania rzeczywistych badań ankietowych**:

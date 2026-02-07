@@ -73,3 +73,6 @@ temp_development_files/
 
 # Local report outputs
 reports/
+
+# Local contextual materials (papers, notes, scratch files)
+.local_context/
