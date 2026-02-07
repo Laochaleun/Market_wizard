@@ -414,3 +414,17 @@ We cache every generated HTML/PDF via `processing_utils.save_file_to_cache` and 
    - isolate Yelp-like “general reviews” from e-commerce intent framing.
 4. Keep same hard gates and rerun identical external validation:
    - do not relax gates unless explicitly decided by product owner.
+
+### 11) Git checkpoints from this session
+
+- Calibration stage-1 implementation commit:
+  - `1918c6b`
+  - message: `Stage 1 calibration: add domain policy runtime and external readiness validation`
+- Local paper-context documentation commit:
+  - `03ad485`
+  - message: `Document local reference paper context and ignore .local_context`
+
+### 12) Remote push status (end of session)
+
+- Pushed: `origin/main` (GitHub) up to `03ad485`.
+- Not pushed intentionally: `hf/main` (Hugging Face) to keep deployment pending while calibration work continues.
