@@ -1,3 +1,11 @@
+v0.5.2 (2026-02-07)
+- Added SSR parity validation against `/Users/pawel/semantic-similarity-rating/semantic_similarity_rating` (core PMF + temperature scaling).
+- Updated and fixed SSR unit tests in Market Wizard to match current anchor set loading (`get_anchor_sets`).
+- Added real-data benchmark script for labeled datasets (`backend/scripts/evaluate_ssr_on_real_data.py`) with model comparison metrics (MAE, Spearman, exact/off-by-one accuracy).
+- Added 20-industry benchmark script based on Amazon Reviews 2023 category JSONL streams (`backend/scripts/evaluate_ssr_20_industries.py`).
+- Added benchmark report with conclusions and operational guidance in `reports/ssr_embedding_benchmark_2026-02-07.md`.
+- Switched default embedding model to `BAAI/bge-m3` in config fallback (`backend/app/config.py`) and local env (`backend/.env`), including documentation updates.
+
 v0.5.1 (2026-02-07)
 - Fixed gender mapping bug in UI: selecting `K` (PL) now correctly maps to backend `F` instead of falling back to "all genders".
 - Localized respondent gender labels in generated reports (`K/M` for Polish, `F/M` for English).
