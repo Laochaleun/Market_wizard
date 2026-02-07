@@ -37,6 +37,15 @@ class EvalMetrics:
     mean_true: float
 
 
+def _shuffle_and_limit(rows: list[tuple[str, int]], limit: int, seed: int) -> tuple[list[str], list[int]]:
+    rng = np.random.default_rng(seed)
+    rng.shuffle(rows)
+    if limit > 0:
+        rows = rows[:limit]
+    texts, labels = zip(*rows)
+    return list(texts), list(labels)
+
+
 def _load_hf_amazon_reviews(limit: int, seed: int) -> tuple[list[str], list[int]]:
     from datasets import load_dataset
 
@@ -47,12 +56,19 @@ def _load_hf_amazon_reviews(limit: int, seed: int) -> tuple[list[str], list[int]
         for x in ds
         if str(x["review_body"]).strip() and int(x["stars"]) in {1, 2, 3, 4, 5}
     ]
-    rng = np.random.default_rng(seed)
-    rng.shuffle(rows)
-    if limit > 0:
-        rows = rows[:limit]
-    texts, labels = zip(*rows)
-    return list(texts), list(labels)
+    return _shuffle_and_limit(rows, limit, seed)
+
+
+def _load_hf_yelp_reviews(limit: int, seed: int) -> tuple[list[str], list[int]]:
+    from datasets import load_dataset
+
+    ds = load_dataset("yelp_review_full", split="test")
+    rows = [
+        (str(x["text"]).strip(), int(x["label"]) + 1)  # label 0..4 -> stars 1..5
+        for x in ds
+        if str(x["text"]).strip() and int(x["label"]) in {0, 1, 2, 3, 4}
+    ]
+    return _shuffle_and_limit(rows, limit, seed)
 
 
 def _score_texts_ssr(
@@ -117,6 +133,12 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Evaluate SSR on real labeled data.")
     p.add_argument("--limit", type=int, default=1200, help="Number of test examples (0 = all).")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument(
+        "--dataset",
+        choices=["amazon_reviews_multi", "yelp_review_full"],
+        default="amazon_reviews_multi",
+        help="Real labeled dataset source.",
+    )
     p.add_argument("--language", choices=["pl", "en"], default="en")
     p.add_argument("--temperature", type=float, default=1.0)
     p.add_argument("--epsilon", type=float, default=0.0)
@@ -143,7 +165,17 @@ def main() -> None:
     if lang != Language.EN:
         print("Note: default dataset labels are English review stars; EN anchors are recommended.")
 
-    texts, labels = _load_hf_amazon_reviews(limit=args.limit, seed=args.seed)
+    if args.dataset == "yelp_review_full":
+        texts, labels = _load_hf_yelp_reviews(limit=args.limit, seed=args.seed)
+    else:
+        try:
+            texts, labels = _load_hf_amazon_reviews(limit=args.limit, seed=args.seed)
+        except Exception as exc:
+            print(
+                "amazon_reviews_multi unavailable in current datasets runtime; "
+                f"falling back to yelp_review_full. ({exc.__class__.__name__})"
+            )
+            texts, labels = _load_hf_yelp_reviews(limit=args.limit, seed=args.seed)
     print(f"Loaded real dataset rows: {len(labels)}")
     print(f"Anchor sets: {len(get_anchor_sets(lang))} | temperature={args.temperature} | epsilon={args.epsilon}")
 

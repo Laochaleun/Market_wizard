@@ -39,7 +39,7 @@ class Settings(BaseSettings):
 
     # Embedding Settings
     embedding_provider: Literal["local", "openai"] = "local"
-    embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_model: str = "BAAI/bge-m3"
     embedding_warmup: bool = True
 
     # Database

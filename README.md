@@ -165,15 +165,15 @@ Market_wizard/
 | `LLM_MODEL` | Model Gemini | `gemini-2.0-flash-001` |
 | `RESEARCH_LLM_MODEL` | Model do groundingu (wyszukiwania źródeł) | `gemini-2.5-flash-lite` |
 | `RESEARCH_INTERPRETATION_MODEL` | Model do interpretacji treści źródeł | `gemini-3-flash-preview` |
-| `EMBEDDING_MODEL` | Model embeddingów | `all-MiniLM-L6-v2` (lokalny) |
+| `EMBEDDING_MODEL` | Model embeddingów | `BAAI/bge-m3` (lokalny) |
 | `EMBEDDING_WARMUP` | Warmup modelu lokalnego (pobranie przy starcie) | `true` |
 | `GUS_API_KEY` | Opcjonalny - dla API GUS | - |
 
 ### Modele embeddingów (lokalne)
 
 Wspierane modele:
-- `all-MiniLM-L6-v2` (domyślny, zgodny z SSR tool)
-- `BAAI/bge-m3` (opcjonalny)
+- `BAAI/bge-m3` (domyślny)
+- `all-MiniLM-L6-v2` (opcjonalny, zgodny z SSR tool)
 
 Model lokalny jest automatycznie pobierany przy starcie aplikacji.
 > **Uwaga:** Model embeddingów ma istotny wpływ na rozkłady SSR (np. przesunięcie masy w stronę 4–5). Porównuj wyniki tylko przy stałym embeddingu. Szczegóły: `technical_report.md`.
@@ -290,7 +290,7 @@ Oparta na badaniu: **Maier, B.F., et al. (2025).** *"LLMs Reproduce Human Purcha
 
 1. **Tekstowa elicytacja** - LLM odpowiada naturalnym tekstem (nie liczbą)
 2. **Anchor statements** - 6 zestawów zdań reprezentujących skalę 1-5
-3. **Embedddingi** - tekst → wektor (lokalnie `all-MiniLM-L6-v2` lub OpenAI `text-embedding-3-small`)
+3. **Embedddingi** - tekst → wektor (lokalnie `BAAI/bge-m3` lub OpenAI `text-embedding-3-small`)
 4. **Cosine similarity** - porównanie z kotwicami → rozkład PMF
 5. **Agregacja** - średnia z wielu agentów
 6. **Intent-only SSR** - do punktacji używana jest krótka deklaracja intencji zakupu; dłuższe odpowiedzi są tylko do wniosków jakościowych
