@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build domain-aware calibration policy artifact."""
+"""Build a single global SSR calibrator from external datasets."""
 
 from __future__ import annotations
 
@@ -14,11 +14,7 @@ from huggingface_hub import HfFileSystem
 
 from app.i18n import DEFAULT_ANCHOR_VARIANT, Language, get_anchor_sets, get_anchor_variants
 from app.services.embedding_client import LocalEmbeddingClient
-from app.services.score_calibration import (
-    DomainCalibrationPolicy,
-    IsotonicCalibrator,
-    fit_isotonic_calibrator,
-)
+from app.services.score_calibration import IsotonicCalibrator, fit_isotonic_calibrator
 
 
 CATEGORIES_20 = [
@@ -173,34 +169,6 @@ def _load_amazon_2023(limit_per_category: int, max_scan: int, seed: int) -> tupl
     return [x for x, _ in all_rows], np.array([y for _, y in all_rows], dtype=float)
 
 
-def _fit_domain_calibrator(scores: np.ndarray, labels: np.ndarray, holdout_ratio: float, seed: int) -> tuple[IsotonicCalibrator, dict[str, float]]:
-    n = labels.size
-    idx = np.arange(n)
-    rng = np.random.default_rng(seed)
-    rng.shuffle(idx)
-    n_hold = int(round(n * holdout_ratio))
-    n_hold = max(1, min(n - 1, n_hold))
-    hold_idx = idx[:n_hold]
-    train_idx = idx[n_hold:]
-    cal = fit_isotonic_calibrator(scores[train_idx], labels[train_idx])
-
-    def mae(a: np.ndarray, b: np.ndarray) -> float:
-        return float(np.abs(a - b).mean())
-
-    raw_train = scores[train_idx]
-    cal_train = cal.transform(raw_train)
-    raw_hold = scores[hold_idx]
-    cal_hold = cal.transform(raw_hold)
-    return cal, {
-        "train_n": float(train_idx.size),
-        "holdout_n": float(hold_idx.size),
-        "train_mae_raw": mae(raw_train, labels[train_idx]),
-        "train_mae_cal": mae(cal_train, labels[train_idx]),
-        "holdout_mae_raw": mae(raw_hold, labels[hold_idx]),
-        "holdout_mae_cal": mae(cal_hold, labels[hold_idx]),
-    }
-
-
 def _off1(pred: np.ndarray, labels: np.ndarray) -> float:
     rounded = np.clip(np.rint(pred), 1, 5).astype(int)
     yi = labels.astype(int)
@@ -224,11 +192,13 @@ def _blend_calibrator(cal: IsotonicCalibrator, alpha: float) -> IsotonicCalibrat
     )
 
 
-def _fit_domain_calibrator_off1_tuned(
+def _fit_calibrator_with_objective(
     scores: np.ndarray,
     labels: np.ndarray,
+    *,
     holdout_ratio: float,
     seed: int,
+    optimize: str,
 ) -> tuple[IsotonicCalibrator, dict[str, float]]:
     n = labels.size
     idx = np.arange(n)
@@ -248,16 +218,38 @@ def _fit_domain_calibrator_off1_tuned(
     iso_hold = iso_train.transform(hold_scores)
 
     best_alpha = 1.0
-    best_tuple = (-1.0, float("inf"), -1.0)  # off1 max, mae min, exact max
-    for alpha in np.linspace(0.0, 1.0, 21):
-        pred = np.clip(hold_scores + alpha * (iso_hold - hold_scores), 1.0, 5.0)
-        off1 = _off1(pred, hold_labels)
-        mae = float(np.abs(pred - hold_labels).mean())
-        exact = _exact(pred, hold_labels)
-        key = (off1, -mae, exact)
-        if key > best_tuple:
-            best_tuple = key
-            best_alpha = float(alpha)
+    if optimize == "off1":
+        best_tuple = (-1.0, float("inf"), -1.0)  # off1 max, mae min, exact max
+        for alpha in np.linspace(0.0, 1.0, 21):
+            pred = np.clip(hold_scores + alpha * (iso_hold - hold_scores), 1.0, 5.0)
+            off1 = _off1(pred, hold_labels)
+            mae = float(np.abs(pred - hold_labels).mean())
+            exact = _exact(pred, hold_labels)
+            key = (off1, -mae, exact)
+            if key > best_tuple:
+                best_tuple = key
+                best_alpha = float(alpha)
+    elif optimize == "balanced":
+        # Composite objective from stage recommendations.
+        best_score = -1e9
+        for alpha in np.linspace(0.0, 1.0, 21):
+            pred = np.clip(hold_scores + alpha * (iso_hold - hold_scores), 1.0, 5.0)
+            off1 = _off1(pred, hold_labels)
+            mae = float(np.abs(pred - hold_labels).mean())
+            exact = _exact(pred, hold_labels)
+            score = 0.5 * off1 - 0.3 * mae + 0.2 * exact
+            if score > best_score:
+                best_score = score
+                best_alpha = float(alpha)
+    else:
+        # mae
+        best_mae = float("inf")
+        for alpha in np.linspace(0.0, 1.0, 21):
+            pred = np.clip(hold_scores + alpha * (iso_hold - hold_scores), 1.0, 5.0)
+            mae = float(np.abs(pred - hold_labels).mean())
+            if mae < best_mae:
+                best_mae = mae
+                best_alpha = float(alpha)
 
     iso_full = fit_isotonic_calibrator(scores, labels)
     blended = _blend_calibrator(iso_full, best_alpha)
@@ -280,7 +272,7 @@ def _fit_domain_calibrator_off1_tuned(
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Build domain calibration policy.")
+    p = argparse.ArgumentParser(description="Build global calibrator artifact.")
     p.add_argument("--model", default="BAAI/bge-m3")
     p.add_argument("--anchor-variant", default=DEFAULT_ANCHOR_VARIANT, choices=get_anchor_variants())
     p.add_argument("--temperature", type=float, default=1.0)
@@ -292,58 +284,30 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--amazon-max-scan", type=int, default=25000)
     p.add_argument("--holdout-ratio", type=float, default=0.2)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument(
-        "--optimize",
-        choices=["mae", "off1"],
-        default="off1",
-        help="Objective used to tune domain calibrator on holdout.",
-    )
+    p.add_argument("--optimize", choices=["mae", "off1", "balanced"], default="off1")
     p.add_argument(
         "--out",
-        default="/Users/pawel/Market_wizard/backend/app/data/ssr_calibration_policy_default.json",
+        default="/Users/pawel/Market_wizard/backend/app/data/ssr_calibrator_default.json",
     )
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    print(f"Model={args.model} anchor_variant={args.anchor_variant} T={args.temperature} eps={args.epsilon}")
+    print(
+        f"Model={args.model} anchor_variant={args.anchor_variant} "
+        f"T={args.temperature} eps={args.epsilon} optimize={args.optimize}"
+    )
     client = LocalEmbeddingClient(model_name=args.model)
 
-    # general domain: Yelp reviews
     yelp_x, yelp_y = _load_yelp(args.limit_yelp, args.seed)
-    gen_x = yelp_x
-    gen_y = yelp_y
-    gen_scores = _score_texts(
-        client,
-        gen_x,
-        language=Language.EN,
-        anchor_variant=args.anchor_variant,
-        temperature=args.temperature,
-        epsilon=args.epsilon,
-    )
-    if args.optimize == "off1":
-        general_cal, general_diag = _fit_domain_calibrator_off1_tuned(
-            gen_scores,
-            gen_y,
-            holdout_ratio=args.holdout_ratio,
-            seed=args.seed,
-        )
-    else:
-        general_cal, general_diag = _fit_domain_calibrator(
-            gen_scores,
-            gen_y,
-            holdout_ratio=args.holdout_ratio,
-            seed=args.seed,
-        )
-
-    # purchase_intent domain: Amazon 2023 + App Reviews + Allegro
     app_x, app_y = _load_app_reviews(args.limit_app, args.seed + 1)
     amz_x, amz_y = _load_amazon_2023(args.amazon_per_category, args.amazon_max_scan, args.seed + 2)
     all_x, all_y = _load_allegro(args.limit_allegro, args.seed + 3)
-    amz_scores = _score_texts(
+
+    yelp_scores = _score_texts(
         client,
-        amz_x,
+        yelp_x,
         language=Language.EN,
         anchor_variant=args.anchor_variant,
         temperature=args.temperature,
@@ -357,6 +321,14 @@ def main() -> None:
         temperature=args.temperature,
         epsilon=args.epsilon,
     )
+    amz_scores = _score_texts(
+        client,
+        amz_x,
+        language=Language.EN,
+        anchor_variant=args.anchor_variant,
+        temperature=args.temperature,
+        epsilon=args.epsilon,
+    )
     allegro_scores = _score_texts(
         client,
         all_x,
@@ -365,33 +337,18 @@ def main() -> None:
         temperature=args.temperature,
         epsilon=args.epsilon,
     )
-    ecom_y = np.concatenate([amz_y, app_y, all_y])
-    ecom_scores = np.concatenate([amz_scores, app_scores, allegro_scores])
-    if args.optimize == "off1":
-        ecommerce_cal, ecommerce_diag = _fit_domain_calibrator_off1_tuned(
-            ecom_scores,
-            ecom_y,
-            holdout_ratio=args.holdout_ratio,
-            seed=args.seed + 7,
-        )
-    else:
-        ecommerce_cal, ecommerce_diag = _fit_domain_calibrator(
-            ecom_scores,
-            ecom_y,
-            holdout_ratio=args.holdout_ratio,
-            seed=args.seed + 7,
-        )
 
-    policy = DomainCalibrationPolicy(
-        default_domain="general",
-        calibrators={
-            "general": general_cal,
-            "purchase_intent": ecommerce_cal,
-            "ecommerce": ecommerce_cal,
-        },
+    scores = np.concatenate([yelp_scores, app_scores, amz_scores, allegro_scores])
+    labels = np.concatenate([yelp_y, app_y, amz_y, all_y])
+    calibrator, diagnostics = _fit_calibrator_with_objective(
+        scores,
+        labels,
+        holdout_ratio=args.holdout_ratio,
+        seed=args.seed,
+        optimize=args.optimize,
     )
     out = Path(args.out).expanduser().resolve()
-    policy.save_json(
+    calibrator.save_json(
         out,
         metadata={
             "created_at": datetime.now().isoformat(),
@@ -400,18 +357,21 @@ def main() -> None:
             "temperature": args.temperature,
             "epsilon": args.epsilon,
             "optimize": args.optimize,
-            "general_train_rows": int(gen_y.size),
-            "ecommerce_train_rows": int(ecom_y.size),
-            "purchase_intent_train_rows": int(ecom_y.size),
-            "general_diagnostics": general_diag,
-            "ecommerce_diagnostics": ecommerce_diag,
-            "purchase_intent_diagnostics": ecommerce_diag,
+            "train_rows": int(labels.size),
+            "diagnostics": diagnostics,
         },
     )
-    print(f"Saved policy: {out}")
-    print(f"General holdout MAE raw->cal: {general_diag['holdout_mae_raw']:.4f} -> {general_diag['holdout_mae_cal']:.4f}")
-    print(f"Ecommerce holdout MAE raw->cal: {ecommerce_diag['holdout_mae_raw']:.4f} -> {ecommerce_diag['holdout_mae_cal']:.4f}")
+    print(f"Saved global calibrator: {out}")
+    print(
+        "Holdout MAE raw->cal: "
+        f"{diagnostics['holdout_mae_raw']:.4f} -> {diagnostics['holdout_mae_cal']:.4f}"
+    )
+    print(
+        "Holdout Off1 raw->cal: "
+        f"{diagnostics['holdout_off1_raw']:.4f} -> {diagnostics['holdout_off1_cal']:.4f}"
+    )
 
 
 if __name__ == "__main__":
     main()
+

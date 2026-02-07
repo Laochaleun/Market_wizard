@@ -56,4 +56,5 @@ def test_domain_policy_select_and_roundtrip(tmp_path: Path) -> None:
     x = np.array([1.0], dtype=float)
     assert np.allclose(loaded.select("general").transform(x), np.array([1.0]))
     assert np.allclose(loaded.select("ecommerce").transform(x), np.array([2.0]))
+    assert np.allclose(loaded.select("purchase_intent").transform(x), np.array([2.0]))
     assert loaded.select("unknown") is not None

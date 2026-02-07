@@ -28,7 +28,12 @@ import numpy as np
 from huggingface_hub import HfFileSystem
 from scipy.stats import spearmanr
 
-from app.i18n import Language, get_anchor_sets
+from app.i18n import (
+    DEFAULT_ANCHOR_VARIANT,
+    Language,
+    get_anchor_sets,
+    get_anchor_variants,
+)
 from app.services.embedding_client import LocalEmbeddingClient
 from app.services.score_calibration import IsotonicCalibrator, fit_isotonic_calibrator
 
@@ -455,6 +460,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--model", default="BAAI/bge-m3", help="Local embedding model.")
     p.add_argument("--language", choices=["pl", "en"], default="en", help="Anchor language.")
     p.add_argument(
+        "--anchor-variant",
+        default=DEFAULT_ANCHOR_VARIANT,
+        choices=get_anchor_variants(),
+        help="Anchor set variant key.",
+    )
+    p.add_argument(
         "--anchor-language-mode",
         choices=["fixed", "auto"],
         default="fixed",
@@ -586,7 +597,7 @@ def main() -> None:
     epsilons = _parse_float_list(args.epsilons)
     language = Language.PL if args.language == "pl" else Language.EN
 
-    anchor_sets = get_anchor_sets(language)
+    anchor_sets = get_anchor_sets(language, variant=args.anchor_variant)
     configs = _build_configs(
         temperatures=temperatures,
         epsilons=epsilons,
@@ -596,6 +607,7 @@ def main() -> None:
 
     print(f"Embedding model: {args.model}")
     print(f"Anchor language: {language.value}")
+    print(f"Anchor variant: {args.anchor_variant}")
     print(f"Anchor language mode: {args.anchor_language_mode}")
     print(f"Configs to evaluate: {len(configs)}")
     if args.skip_industries:
@@ -615,7 +627,7 @@ def main() -> None:
 
     for lang in languages_to_prepare:
         mats: list[np.ndarray] = []
-        for anchor_set in get_anchor_sets(lang):
+        for anchor_set in get_anchor_sets(lang, variant=args.anchor_variant):
             anchor_texts = [anchor_set[i] for i in range(1, 6)]
             emb = _embed_texts(
                 client,
@@ -826,6 +838,7 @@ def main() -> None:
     lines.append("## Run Setup")
     lines.append(f"- Embedding model: `{args.model}`")
     lines.append(f"- Anchor language: `{language.value}`")
+    lines.append(f"- Anchor variant: `{args.anchor_variant}`")
     lines.append(f"- Anchor language mode: `{args.anchor_language_mode}`")
     lines.append(f"- Configs tested: `{len(configs)}`")
     lines.append(f"- Skip industries: `{args.skip_industries}`")

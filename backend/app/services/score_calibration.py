@@ -80,6 +80,10 @@ class DomainCalibrationPolicy:
             return None
         if domain_hint:
             key = str(domain_hint).strip().lower()
+            if key == "purchase_intent" and "purchase_intent" not in self.calibrators and "ecommerce" in self.calibrators:
+                key = "ecommerce"
+            elif key == "ecommerce" and "ecommerce" not in self.calibrators and "purchase_intent" in self.calibrators:
+                key = "purchase_intent"
             if key in self.calibrators:
                 return self.calibrators[key]
         return self.calibrators.get(self.default_domain)

@@ -5,17 +5,24 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+from glob import glob
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from datasets import load_dataset
+from datasets import Dataset, load_dataset
 from huggingface_hub import HfFileSystem
 from scipy.stats import spearmanr
 
 from app.config import get_settings
-from app.i18n import Language, get_anchor_sets
+from app.i18n import (
+    DEFAULT_ANCHOR_VARIANT,
+    Language,
+    get_anchor_sets,
+    get_anchor_variants,
+)
 from app.services.embedding_client import LocalEmbeddingClient
 from app.services.score_calibration import DomainCalibrationPolicy, IsotonicCalibrator
 
@@ -43,6 +50,8 @@ CATEGORIES_20 = [
     "Industrial_and_Scientific",
 ]
 
+HF_DATASETS_CACHE_ROOT = Path.home() / ".cache" / "huggingface" / "datasets"
+
 
 @dataclass
 class DatasetSlice:
@@ -66,6 +75,10 @@ class Metrics:
 class GateResult:
     name: str
     metrics: Metrics
+    ks_distance: float
+    ks_similarity: float
+    split_half_ceiling_proxy: float
+    correlation_attainment: float
     mae_ci: tuple[float, float]
     off1_ci: tuple[float, float]
     spearman_ci: tuple[float, float]
@@ -119,6 +132,49 @@ def _bootstrap_ci(
     return out
 
 
+def _discrete_ks_distance(scores: np.ndarray, labels: np.ndarray) -> float:
+    """KS distance over discrete 1..5 stars using rounded predictions."""
+    pred = np.clip(np.rint(scores), 1, 5).astype(int)
+    true = np.clip(np.rint(labels), 1, 5).astype(int)
+    n_pred = max(1, pred.size)
+    n_true = max(1, true.size)
+    pred_hist = np.array([(pred == k).sum() for k in range(1, 6)], dtype=float) / n_pred
+    true_hist = np.array([(true == k).sum() for k in range(1, 6)], dtype=float) / n_true
+    pred_cdf = np.cumsum(pred_hist)
+    true_cdf = np.cumsum(true_hist)
+    return float(np.max(np.abs(pred_cdf - true_cdf)))
+
+
+def _split_half_ceiling_proxy(labels: np.ndarray, *, n_splits: int, seed: int) -> float:
+    """
+    Proxy ceiling from split-half agreement of label distributions.
+
+    Note: this is a pragmatic proxy for single-label datasets, not a full
+    human split-half ceiling from repeated ratings per item.
+    """
+    if labels.size < 20 or n_splits < 1:
+        return 0.0
+    rng = np.random.default_rng(seed)
+    vals: list[float] = []
+    idx = np.arange(labels.size, dtype=int)
+    for _ in range(n_splits):
+        perm = rng.permutation(idx)
+        half = perm.size // 2
+        if half < 10:
+            continue
+        a = np.clip(np.rint(labels[perm[:half]]), 1, 5).astype(int)
+        b = np.clip(np.rint(labels[perm[half : half * 2]]), 1, 5).astype(int)
+        a_hist = np.array([(a == k).sum() for k in range(1, 6)], dtype=float)
+        b_hist = np.array([(b == k).sum() for k in range(1, 6)], dtype=float)
+        corr = spearmanr(a_hist, b_hist).correlation
+        if corr is None or np.isnan(corr):
+            continue
+        vals.append(float(corr))
+    if not vals:
+        return 0.0
+    return float(np.median(np.array(vals, dtype=float)))
+
+
 def _response_embeddings_to_pmf(response_embeddings: np.ndarray, likert_embeddings: np.ndarray, epsilon: float) -> np.ndarray:
     if response_embeddings.shape[0] == 0:
         return np.empty((0, 5))
@@ -152,10 +208,11 @@ def _score_texts(
     texts: list[str],
     *,
     language: Language,
+    anchor_variant: str,
     temperature: float,
     epsilon: float,
 ) -> np.ndarray:
-    anchors = get_anchor_sets(language)
+    anchors = get_anchor_sets(language, variant=anchor_variant)
     anchor_mats: list[np.ndarray] = []
     for a in anchors:
         anchor_texts = [a[i] for i in range(1, 6)]
@@ -183,8 +240,22 @@ def _sample_rows(rows: list[tuple[str, int, int | None]], limit: int, seed: int)
     return DatasetSlice(name="", language=Language.EN, texts=texts, labels=labels, timestamps=ts)
 
 
+def _latest_cached_file(pattern: str) -> Path | None:
+    matches = [Path(p) for p in glob(pattern, recursive=True)]
+    if not matches:
+        return None
+    return max(matches, key=lambda p: p.stat().st_mtime)
+
+
 def _load_yelp(limit: int, seed: int) -> DatasetSlice:
-    ds = load_dataset("Yelp/yelp_review_full", split="test")
+    ds = None
+    try:
+        ds = load_dataset("Yelp/yelp_review_full", split="test")
+    except Exception:
+        yelp_arrow = _latest_cached_file(str(HF_DATASETS_CACHE_ROOT / "**" / "yelp_review_full-test.arrow"))
+        if yelp_arrow is None:
+            raise
+        ds = Dataset.from_file(str(yelp_arrow))
     rows: list[tuple[str, int, int | None]] = []
     for x in ds:
         text = str(x["text"]).strip()
@@ -198,7 +269,14 @@ def _load_yelp(limit: int, seed: int) -> DatasetSlice:
 
 
 def _load_app_reviews(limit: int, seed: int) -> DatasetSlice:
-    ds = load_dataset("app_reviews", split="train")
+    ds = None
+    try:
+        ds = load_dataset("app_reviews", split="train")
+    except Exception:
+        app_arrow = _latest_cached_file(str(HF_DATASETS_CACHE_ROOT / "**" / "app_reviews-train.arrow"))
+        if app_arrow is None:
+            raise
+        ds = Dataset.from_file(str(app_arrow))
     rows: list[tuple[str, int, int | None]] = []
     for x in ds:
         text = str(x["review"]).strip()
@@ -219,7 +297,14 @@ def _load_app_reviews(limit: int, seed: int) -> DatasetSlice:
 
 
 def _load_allegro(limit: int, seed: int) -> DatasetSlice:
-    ds = load_dataset("allegro/klej-allegro-reviews", split="train")
+    ds = None
+    try:
+        ds = load_dataset("allegro/klej-allegro-reviews", split="train")
+    except Exception:
+        allegro_arrow = _latest_cached_file(str(HF_DATASETS_CACHE_ROOT / "**" / "klej-allegro-reviews-train.arrow"))
+        if allegro_arrow is None:
+            raise
+        ds = Dataset.from_file(str(allegro_arrow))
     rows: list[tuple[str, int, int | None]] = []
     for x in ds:
         text = str(x["text"]).strip()
@@ -277,6 +362,8 @@ def _load_amazon_2023(limit_per_category: int, max_scan: int, seed: int) -> Data
     out = _sample_rows(all_rows, 0, seed)
     out.name = "Amazon Reviews 2023 - 20 categories (EN)"
     out.language = Language.EN
+    if len(out.texts) == 0:
+        raise RuntimeError("Amazon Reviews 2023 loader produced zero rows.")
     return out
 
 
@@ -299,6 +386,7 @@ def parse_args() -> argparse.Namespace:
     settings = get_settings()
     p = argparse.ArgumentParser(description="External production-readiness validation.")
     p.add_argument("--model", default=settings.embedding_model)
+    p.add_argument("--anchor-variant", default=DEFAULT_ANCHOR_VARIANT, choices=get_anchor_variants())
     p.add_argument("--temperature", type=float, default=settings.ssr_temperature)
     p.add_argument("--epsilon", type=float, default=settings.ssr_epsilon)
     p.add_argument("--calibrator-path", default=settings.ssr_calibration_artifact_path)
@@ -310,6 +398,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--amazon-per-category", type=int, default=200)
     p.add_argument("--amazon-max-scan", type=int, default=20000)
     p.add_argument("--bootstrap", type=int, default=1000)
+    p.add_argument("--split-half-splits", type=int, default=300)
     p.add_argument("--temporal-tail-ratio", type=float, default=0.2)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--gate-mae-max", type=float, default=0.60)
@@ -331,6 +420,12 @@ def _evaluate_policy(
 ) -> GateResult:
     m_raw = _metrics(raw_scores, labels)
     m_pol = _metrics(policy_scores, labels)
+    ks_distance = _discrete_ks_distance(policy_scores, labels)
+    ks_similarity = 1.0 - ks_distance
+    ceiling_proxy = _split_half_ceiling_proxy(
+        labels, n_splits=args.split_half_splits, seed=args.seed + 123
+    )
+    attainment = m_pol.spearman / max(ceiling_proxy, 1e-6)
     ci_pol = _bootstrap_ci(policy_scores, labels, n_boot=args.bootstrap, seed=args.seed + 99)
     mae_pass = ci_pol["mae"][1] <= args.gate_mae_max
     off1_pass = ci_pol["off1"][0] >= args.gate_off1_min
@@ -341,6 +436,10 @@ def _evaluate_policy(
     return GateResult(
         name=name,
         metrics=m_pol,
+        ks_distance=ks_distance,
+        ks_similarity=ks_similarity,
+        split_half_ceiling_proxy=ceiling_proxy,
+        correlation_attainment=attainment,
         mae_ci=ci_pol["mae"],
         off1_ci=ci_pol["off1"],
         spearman_ci=ci_pol["spearman"],
@@ -357,6 +456,7 @@ def _evaluate_policy(
 def main() -> None:
     args = parse_args()
     print(f"Model={args.model} T={args.temperature} eps={args.epsilon}")
+    print(f"Anchor variant={args.anchor_variant}")
     client = LocalEmbeddingClient(model_name=args.model)
     calibrator: IsotonicCalibrator | None = None
     domain_policy: DomainCalibrationPolicy | None = None
@@ -376,12 +476,23 @@ def main() -> None:
             except Exception as exc:
                 print(f"Failed to load domain policy: {exc}")
 
-    datasets: list[DatasetSlice] = [
-        _load_amazon_2023(args.amazon_per_category, args.amazon_max_scan, args.seed),
-        _load_yelp(args.limit_yelp, args.seed + 1),
-        _load_app_reviews(args.limit_app, args.seed + 2),
-        _load_allegro(args.limit_allegro, args.seed + 3),
+    datasets: list[DatasetSlice] = []
+    data_warnings: list[str] = []
+    loaders = [
+        ("amazon_2023", lambda: _load_amazon_2023(args.amazon_per_category, args.amazon_max_scan, args.seed)),
+        ("yelp", lambda: _load_yelp(args.limit_yelp, args.seed + 1)),
+        ("app_reviews", lambda: _load_app_reviews(args.limit_app, args.seed + 2)),
+        ("allegro", lambda: _load_allegro(args.limit_allegro, args.seed + 3)),
     ]
+    for key, loader in loaders:
+        try:
+            datasets.append(loader())
+        except Exception as exc:
+            msg = f"Skipped dataset `{key}`: {type(exc).__name__}: {exc}"
+            print(msg)
+            data_warnings.append(msg)
+    if not datasets:
+        raise RuntimeError("No datasets available for validation (all loaders failed).")
 
     pooled_labels: list[np.ndarray] = []
     pooled_raw: list[np.ndarray] = []
@@ -390,10 +501,17 @@ def main() -> None:
         "raw_only": [],
         "global_calibrated": [],
         "pl_only_calibrated": [],
-        "ecommerce_only_calibrated": [],
+        "purchase_intent_only_calibrated": [],
     }
+    has_purchase_domain_calibrator = False
+    purchase_hybrid_alphas = [i / 10.0 for i in range(1, 10)]
     if domain_policy is not None:
         pooled_policy_scores["domain_policy_artifact"] = []
+        if domain_policy.select(domain_hint="purchase_intent") is not None:
+            has_purchase_domain_calibrator = True
+            pooled_policy_scores["purchase_domain_only_calibrated"] = []
+            for alpha in purchase_hybrid_alphas:
+                pooled_policy_scores[f"purchase_hybrid_{alpha:.1f}"] = []
     for alpha_i in range(1, 10):
         pooled_policy_scores[f"blend_{alpha_i / 10:.1f}"] = []
     per_rows: list[dict] = []
@@ -405,6 +523,7 @@ def main() -> None:
             client,
             ds.texts,
             language=ds.language,
+            anchor_variant=args.anchor_variant,
             temperature=args.temperature,
             epsilon=args.epsilon,
         )
@@ -417,15 +536,29 @@ def main() -> None:
             alpha = alpha_i / 10.0
             blend_scores[f"blend_{alpha:.1f}"] = np.clip(raw_scores + alpha * (cal_scores - raw_scores), 1.0, 5.0)
         is_pl = ds.language == Language.PL
-        is_ecommerce = "Amazon" in ds.name or "Allegro" in ds.name or "App Reviews" in ds.name
-        domain_hint = "ecommerce" if is_ecommerce else "general"
+        is_purchase_intent = "Amazon" in ds.name or "Allegro" in ds.name or "App Reviews" in ds.name
+        domain_hint = "purchase_intent" if is_purchase_intent else "general"
         pl_only = cal_scores if is_pl else raw_scores
-        ecommerce_only = cal_scores if is_ecommerce else raw_scores
+        purchase_intent_only = cal_scores if is_purchase_intent else raw_scores
         domain_policy_scores = raw_scores
+        purchase_domain_only = raw_scores
+        purchase_hybrid_scores: dict[str, np.ndarray] = {}
         if domain_policy is not None:
             chosen = domain_policy.select(domain_hint=domain_hint)
             if chosen is not None:
                 domain_policy_scores = chosen.transform(raw_scores)
+            purchase_cal = domain_policy.select(domain_hint="purchase_intent")
+            if has_purchase_domain_calibrator and purchase_cal is not None:
+                if is_purchase_intent:
+                    purchase_domain_only = purchase_cal.transform(raw_scores)
+                    for alpha in purchase_hybrid_alphas:
+                        purchase_hybrid_scores[f"purchase_hybrid_{alpha:.1f}"] = np.clip(
+                            cal_scores + alpha * (purchase_domain_only - cal_scores), 1.0, 5.0
+                        )
+                else:
+                    purchase_domain_only = raw_scores
+                    for alpha in purchase_hybrid_alphas:
+                        purchase_hybrid_scores[f"purchase_hybrid_{alpha:.1f}"] = raw_scores
 
         m_raw = _metrics(raw_scores, ds.labels)
         m_cal = _metrics(cal_scores, ds.labels)
@@ -433,12 +566,18 @@ def main() -> None:
             "raw_only": 0.0,
             "global_calibrated": (m_cal.mae - m_raw.mae) / m_raw.mae if m_raw.mae > 0 else 0.0,
             "pl_only_calibrated": (_metrics(pl_only, ds.labels).mae - m_raw.mae) / m_raw.mae if m_raw.mae > 0 else 0.0,
-            "ecommerce_only_calibrated": (_metrics(ecommerce_only, ds.labels).mae - m_raw.mae) / m_raw.mae if m_raw.mae > 0 else 0.0,
+            "purchase_intent_only_calibrated": (_metrics(purchase_intent_only, ds.labels).mae - m_raw.mae) / m_raw.mae if m_raw.mae > 0 else 0.0,
         }
         if domain_policy is not None:
             mae_reg_by_policy["domain_policy_artifact"] = (
                 (_metrics(domain_policy_scores, ds.labels).mae - m_raw.mae) / m_raw.mae if m_raw.mae > 0 else 0.0
             )
+        if has_purchase_domain_calibrator:
+            mae_reg_by_policy["purchase_domain_only_calibrated"] = (
+                (_metrics(purchase_domain_only, ds.labels).mae - m_raw.mae) / m_raw.mae if m_raw.mae > 0 else 0.0
+            )
+            for k, v in purchase_hybrid_scores.items():
+                mae_reg_by_policy[k] = (_metrics(v, ds.labels).mae - m_raw.mae) / m_raw.mae if m_raw.mae > 0 else 0.0
         for k, v in blend_scores.items():
             mae_reg_by_policy[k] = (_metrics(v, ds.labels).mae - m_raw.mae) / m_raw.mae if m_raw.mae > 0 else 0.0
         per_rows.append(
@@ -462,9 +601,13 @@ def main() -> None:
         pooled_policy_scores["raw_only"].append(raw_scores)
         pooled_policy_scores["global_calibrated"].append(cal_scores)
         pooled_policy_scores["pl_only_calibrated"].append(pl_only)
-        pooled_policy_scores["ecommerce_only_calibrated"].append(ecommerce_only)
+        pooled_policy_scores["purchase_intent_only_calibrated"].append(purchase_intent_only)
         if domain_policy is not None:
             pooled_policy_scores["domain_policy_artifact"].append(domain_policy_scores)
+        if has_purchase_domain_calibrator:
+            pooled_policy_scores["purchase_domain_only_calibrated"].append(purchase_domain_only)
+            for k, v in purchase_hybrid_scores.items():
+                pooled_policy_scores[k].append(v)
         for k, v in blend_scores.items():
             pooled_policy_scores[k].append(v)
 
@@ -519,11 +662,18 @@ def main() -> None:
     lines.append("")
     lines.append("## Setup")
     lines.append(f"- Model: `{args.model}`")
+    lines.append(f"- Anchor variant: `{args.anchor_variant}`")
     lines.append(f"- Temperature: `{args.temperature}`")
     lines.append(f"- Epsilon: `{args.epsilon}`")
     lines.append(f"- Calibration enabled: `{calibrator is not None}`")
     lines.append(f"- Calibrator path: `{args.calibrator_path}`")
     lines.append(f"- Total evaluated rows: `{len(y)}`")
+    lines.append(f"- Split-half ceiling proxy splits: `{args.split_half_splits}`")
+    lines.append(f"- Offline mode: `{bool(os.environ.get('HF_HUB_OFFLINE'))}`")
+    if data_warnings:
+        lines.append("- Dataset warnings:")
+        for warning in data_warnings:
+            lines.append(f"  - {warning}")
     lines.append("")
 
     lines.append("## Pooled Metrics")
@@ -572,15 +722,31 @@ def main() -> None:
 
     lines.append("## Policy Search")
     lines.append(
-        "| Policy | MAE | Off1 | Exact | Spearman | MAE 95% CI | Off1 95% CI | Spearman drop | Max dataset MAE regression | Pass |"
+        "| Policy | MAE | Off1 | Exact | Spearman | KS sim | Ceiling proxy | Corr attainment | MAE 95% CI | Off1 95% CI | Spearman drop | Max dataset MAE regression | Pass |"
     )
-    lines.append("|---|---:|---:|---:|---:|---|---|---:|---:|---|")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---|---|---:|---:|---|")
     for pr in policy_results:
         lines.append(
             f"| {pr.name} | {pr.metrics.mae:.4f} | {pr.metrics.off1:.4f} | {pr.metrics.exact:.4f} | {pr.metrics.spearman:.4f} | "
+            f"{pr.ks_similarity:.4f} | {pr.split_half_ceiling_proxy:.4f} | {pr.correlation_attainment:.4f} | "
             f"[{pr.mae_ci[0]:.4f}, {pr.mae_ci[1]:.4f}] | [{pr.off1_ci[0]:.4f}, {pr.off1_ci[1]:.4f}] | "
             f"{pr.spearman_drop:+.4f} | {pr.max_dataset_mae_regression:+.4f} | {'PASS' if pr.overall_pass else 'FAIL'} |"
         )
+    lines.append("")
+
+    lines.append("## Paper-native Diagnostics (Proxy)")
+    lines.append(
+        "- `KS sim` is `1 - KS distance` between rounded prediction-star CDF and true-star CDF (higher is better)."
+    )
+    lines.append(
+        "- `Ceiling proxy` uses split-half Spearman agreement of label distributions over many random half-splits."
+    )
+    lines.append(
+        "- `Corr attainment` is `policy Spearman / ceiling proxy` and should be treated as a proxy on single-label datasets."
+    )
+    lines.append(f"- Best policy KS sim: `{best_policy.ks_similarity:.4f}`")
+    lines.append(f"- Best policy ceiling proxy: `{best_policy.split_half_ceiling_proxy:.4f}`")
+    lines.append(f"- Best policy corr attainment: `{best_policy.correlation_attainment:.4f}`")
     lines.append("")
 
     lines.append("## Production Gates (Best Policy)")

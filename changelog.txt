@@ -1,3 +1,53 @@
+v0.5.6 (2026-02-08) - Stage 2 calibration/anchors iteration (in progress, not production-ready)
+- Continued Stage 2 SSR tuning with focus on closing production gates while preserving paper-style purchase-intent behavior.
+- Introduced anchor-variant framework with bilingual (PL+EN) variants:
+  - `paper_general_v1`
+  - `paper_general_v2`
+  - `paper_general_v3`
+  - default switched to `paper_general_v3` in `backend/app/i18n.py`.
+- Added anchor-variant selection plumbing in evaluation/training scripts:
+  - `backend/scripts/validate_production_readiness.py` (`--anchor-variant`)
+  - `backend/scripts/tune_ssr_hierarchical.py` (`--anchor-variant`)
+  - `backend/scripts/build_domain_calibration_policy.py` (`--anchor-variant`)
+- Added policy-search expansion in production validation:
+  - renamed `ecommerce_only_calibrated` -> `purchase_intent_only_calibrated`,
+  - added `purchase_domain_only_calibrated`,
+  - added `purchase_hybrid_0.1 ... purchase_hybrid_0.9` candidates.
+- Runtime/domain naming aligned with paper intent framing:
+  - simulation path now passes `domain_hint="purchase_intent"` instead of `ecommerce`,
+  - compatibility alias kept in `DomainCalibrationPolicy.select()` for old artifacts.
+- Added paper-native diagnostics in production validation report:
+  - KS similarity (`1 - KS distance`) on rounded rating distributions,
+  - split-half ceiling proxy,
+  - correlation attainment proxy.
+- Added robust offline/cache handling in validation script:
+  - fallback loading from local HF cached `.arrow` files,
+  - graceful dataset skip with explicit warnings when unavailable.
+- Added global calibrator builder script:
+  - `backend/scripts/build_global_calibrator.py`
+  - supports `--optimize {mae,off1,balanced}` and writes `isotonic_v1` artifact.
+- Re-trained and iterated artifacts multiple times:
+  - `backend/app/data/ssr_calibrator_default.json`
+  - `backend/app/data/ssr_calibration_policy_default.json`
+- Key full-run reports generated during this stage:
+  - `reports/production_readiness_validation_2026-02-07_stage2_anchor_refined.md`
+  - `reports/production_readiness_validation_2026-02-07_stage2_anchor_refined_v3_full.md`
+  - `reports/production_readiness_validation_2026-02-07_stage2_anchor_v3_retrained_full.md`
+  - `reports/production_readiness_validation_2026-02-07_stage2_policy_hybrid_search.md`
+  - `reports/production_readiness_validation_2026-02-07_stage2_oldcal_newpolicy_hybrid.md`
+  - `reports/production_readiness_validation_2026-02-07_stage2_policy_retrained_purchase_app.md`
+  - `reports/production_readiness_validation_2026-02-07_stage2_newcal_oldpolicy_hybrid.md`
+  - `reports/production_readiness_validation_2026-02-07_stage2_global_off1_calibrator.md`
+  - `reports/production_readiness_validation_2026-02-07_stage2_global_balanced_calibrator.md`
+- Best near-pass result in this stage:
+  - policy: `purchase_intent_only_calibrated`
+  - MAE: `0.6092` (target `<= 0.60`, gap `0.0092`)
+  - Off1: `0.9189` (target `>= 0.92`, gap `0.0011`)
+  - Spearman drop + max dataset regression gates passed.
+- Final status of this commit:
+  - Stage 2 significantly advanced and better instrumented,
+  - but still **not production-ready** (`Decision: FAIL` on hard gates).
+
 v0.5.5 (2026-02-07) - Stage 1 calibration framework and external validation
 - Switched runtime SSR defaults to match calibration training setup:
   - `SSR_TEMPERATURE=1.0` in `backend/app/config.py` and `backend/.env.example`.

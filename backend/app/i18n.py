@@ -18,96 +18,283 @@ class Language(str, Enum):
 # ANCHOR STATEMENTS (SSR Engine)
 # =============================================================================
 
-ANCHOR_SETS: Dict[Language, List[Dict[int, str]]] = {
-    Language.PL: [
+DEFAULT_ANCHOR_VARIANT = "paper_general_v3"
+
+ANCHOR_SETS_VARIANTS: Dict[str, Dict[Language, List[Dict[int, str]]]] = {
+    "paper_general_v1": {
+        Language.PL: [
         {
-            1: "Zdecydowanie nie kupię tego produktu",
-            2: "Raczej nie kupię tego produktu",
-            3: "Nie jestem pewien czy kupiłbym ten produkt",
-            4: "Prawdopodobnie kupię ten produkt",
-            5: "Zdecydowanie kupię ten produkt",
+            1: "Zdecydowanie nie wybiorę tej oferty",
+            2: "Raczej nie wybiorę tej oferty",
+            3: "Nie jestem pewien, czy wybiorę tę ofertę",
+            4: "Raczej wybiorę tę ofertę",
+            5: "Zdecydowanie wybiorę tę ofertę",
         },
         {
-            1: "Ten produkt mnie w ogóle nie interesuje",
-            2: "Raczej nie zdecyduję się na zakup",
-            3: "Mogę rozważyć zakup tego produktu",
-            4: "Jestem bardzo zainteresowany zakupem",
-            5: "Na pewno kupię ten produkt",
+            1: "Ta oferta w ogóle mnie nie interesuje",
+            2: "Jest mało prawdopodobne, że się na to zdecyduję",
+            3: "Mogę to rozważyć, ale nie mam pewności",
+            4: "Jestem wyraźnie skłonny/a wybrać tę ofertę",
+            5: "Na pewno się na to zdecyduję",
         },
         {
-            1: "W żadnym wypadku tego nie kupię",
-            2: "Wątpię czy zdecyduję się na zakup",
-            3: "Mogę kupić, ale mogę też nie kupić",
-            4: "Jest duża szansa że to kupię",
-            5: "Absolutnie to kupię",
+            1: "W żadnym wypadku się na to nie zdecyduję",
+            2: "Raczej z tego zrezygnuję",
+            3: "Mogę wybrać tę opcję, ale równie dobrze mogę nie",
+            4: "Jest duża szansa, że wybiorę tę opcję",
+            5: "Absolutnie wybiorę tę opcję",
         },
         {
             1: "To zdecydowanie nie jest dla mnie",
-            2: "Nie sądzę, żebym potrzebował tego produktu",
-            3: "Jestem neutralny wobec zakupu",
-            4: "To wygląda na coś, co bym kupił",
-            5: "To dokładnie to, czego szukałem",
+            2: "Raczej nie widzę powodu, żeby to wybrać",
+            3: "Mam wobec tego neutralne nastawienie",
+            4: "To wygląda na coś, co najpewniej wybiorę",
+            5: "To dokładnie to, czego szukałem/am",
         },
         {
-            1: "Nie mam żadnego zainteresowania tym produktem",
-            2: "Jestem sceptyczny wobec zakupu",
-            3: "Może kupię, może nie",
-            4: "Skłaniam się ku zakupowi",
-            5: "Nie mogę się doczekać zakupu",
+            1: "Nie mam żadnego zainteresowania tą ofertą",
+            2: "Jestem sceptyczny/a wobec tej opcji",
+            3: "Może to wybiorę, a może nie",
+            4: "Skłaniam się ku tej opcji",
+            5: "Bardzo chcę się na to zdecydować",
         },
         {
-            1: "To mnie zupełnie nie przyciąga",
-            2: "Wolałbym tego nie kupować",
-            3: "Jeszcze się nie zdecydowałem czy to kupię",
-            4: "Jest dość prawdopodobne że to kupię",
-            5: "Bardzo chętnie kupię ten produkt",
+            1: "To mnie zupełnie nie przekonuje",
+            2: "Wolałbym/wolałabym tego nie wybierać",
+            3: "Jeszcze nie zdecydowałem/am, czy to wybrać",
+            4: "Jest dość prawdopodobne, że to wybiorę",
+            5: "Bardzo chętnie to wybiorę",
         },
-    ],
-    Language.EN: [
+        ],
+        Language.EN: [
         {
-            1: "I definitely won't buy this product",
-            2: "I probably won't buy this product",
-            3: "I'm not sure if I would buy this product",
-            4: "I would probably buy this product",
-            5: "I would definitely buy this product",
-        },
-        {
-            1: "This product doesn't interest me at all",
-            2: "I'm unlikely to purchase this",
-            3: "I might consider buying this",
-            4: "I'm quite interested in buying this",
-            5: "I will certainly buy this product",
+            1: "I would definitely not choose this option",
+            2: "I would probably not choose this option",
+            3: "I'm not sure whether I would choose this option",
+            4: "I would probably choose this option",
+            5: "I would definitely choose this option",
         },
         {
-            1: "No way I would ever buy this",
-            2: "It's doubtful that I would purchase this",
-            3: "I could go either way on buying this",
-            4: "There's a good chance I'll buy this",
-            5: "I'm absolutely going to buy this",
+            1: "This offer doesn't interest me at all",
+            2: "I'm unlikely to go with this",
+            3: "I might consider this, but I'm uncertain",
+            4: "I'm clearly inclined to go with this",
+            5: "I will certainly go with this",
+        },
+        {
+            1: "There is no way I would choose this",
+            2: "I doubt I would choose this",
+            3: "I could go either way on this",
+            4: "There's a good chance I'll choose this",
+            5: "I'm absolutely going to choose this",
         },
         {
             1: "This is not for me at all",
-            2: "I don't think I need this product",
-            3: "I'm neutral about purchasing this",
-            4: "This seems like something I would buy",
+            2: "I don't think this is the right option for me",
+            3: "I'm neutral about this option",
+            4: "This seems like something I would choose",
             5: "This is exactly what I've been looking for",
         },
         {
-            1: "I have zero interest in this product",
-            2: "I'm skeptical about buying this",
-            3: "Maybe I would buy this, maybe not",
-            4: "I'm leaning towards buying this",
-            5: "I can't wait to buy this product",
+            1: "I have zero interest in this offer",
+            2: "I'm skeptical about this option",
+            3: "Maybe I would choose this, maybe not",
+            4: "I'm leaning toward choosing this",
+            5: "I'm very eager to choose this",
         },
         {
             1: "This doesn't appeal to me whatsoever",
-            2: "I would rather not buy this",
-            3: "I haven't decided if I would buy this",
-            4: "I'm fairly likely to purchase this",
-            5: "I'm very eager to buy this product",
+            2: "I would rather not go with this",
+            3: "I haven't decided whether I would choose this",
+            4: "I'm fairly likely to choose this",
+            5: "I'm very eager to go with this",
         },
-    ],
+        ],
+    },
+    "paper_general_v2": {
+        Language.PL: [
+        {
+            1: "Na pewno odrzucę tę opcję",
+            2: "Raczej odrzucę tę opcję",
+            3: "Nie mam jasnej decyzji wobec tej opcji",
+            4: "Raczej wybiorę tę opcję",
+            5: "Na pewno wybiorę tę opcję",
+        },
+        {
+            1: "To zdecydowanie nie jest coś, na co się zdecyduję",
+            2: "Mało prawdopodobne, że się na to zdecyduję",
+            3: "Trudno mi powiedzieć, czy się na to zdecyduję",
+            4: "Jest duża szansa, że się na to zdecyduję",
+            5: "Jestem pewny/a, że się na to zdecyduję",
+        },
+        {
+            1: "Ta oferta zupełnie mi nie odpowiada",
+            2: "Ta oferta raczej mi nie odpowiada",
+            3: "Ta oferta jest dla mnie neutralna",
+            4: "Ta oferta raczej mi odpowiada",
+            5: "Ta oferta bardzo mi odpowiada",
+        },
+        {
+            1: "Nie widzę żadnej szansy, żebym to wybrał/a",
+            2: "Wątpię, żebym to wybrał/a",
+            3: "Mogę to wybrać, ale mogę też nie",
+            4: "Prawdopodobnie to wybiorę",
+            5: "Zdecydowanie to wybiorę",
+        },
+        {
+            1: "To mnie całkowicie zniechęca",
+            2: "To mnie raczej zniechęca",
+            3: "To nie budzi we mnie ani chęci, ani niechęci",
+            4: "To mnie raczej zachęca",
+            5: "To mnie zdecydowanie zachęca",
+        },
+        {
+            1: "Nie jestem skłonny/a wybrać tej opcji",
+            2: "Jestem mało skłonny/a wybrać tę opcję",
+            3: "Jestem umiarkowanie skłonny/a wybrać tę opcję",
+            4: "Jestem dość skłonny/a wybrać tę opcję",
+            5: "Jestem bardzo skłonny/a wybrać tę opcję",
+        },
+        ],
+        Language.EN: [
+        {
+            1: "I would certainly reject this option",
+            2: "I would likely reject this option",
+            3: "I don't have a clear decision on this option",
+            4: "I would likely choose this option",
+            5: "I would certainly choose this option",
+        },
+        {
+            1: "There is no chance I would go with this",
+            2: "It's unlikely I would go with this",
+            3: "I'm undecided about going with this",
+            4: "There is a good chance I would go with this",
+            5: "I'm sure I would go with this",
+        },
+        {
+            1: "This offer does not fit me at all",
+            2: "This offer probably does not fit me",
+            3: "This offer feels neutral to me",
+            4: "This offer probably fits me",
+            5: "This offer fits me very well",
+        },
+        {
+            1: "I see no way I would choose this",
+            2: "I doubt I would choose this",
+            3: "I could choose this, but I could also pass",
+            4: "I will probably choose this",
+            5: "I will definitely choose this",
+        },
+        {
+            1: "This strongly discourages me",
+            2: "This somewhat discourages me",
+            3: "This neither encourages nor discourages me",
+            4: "This somewhat encourages me",
+            5: "This strongly encourages me",
+        },
+        {
+            1: "I am not inclined to choose this option",
+            2: "I am slightly inclined not to choose this option",
+            3: "I am moderately inclined either way",
+            4: "I am fairly inclined to choose this option",
+            5: "I am strongly inclined to choose this option",
+        },
+        ],
+    },
+    "paper_general_v3": {
+        Language.PL: [
+        {
+            1: "Definitywnie tego nie wybiorę",
+            2: "Raczej tego nie wybiorę",
+            3: "Nie jestem zdecydowany/a",
+            4: "Raczej to wybiorę",
+            5: "Definitywnie to wybiorę",
+        },
+        {
+            1: "To dla mnie zła decyzja",
+            2: "To raczej zła decyzja",
+            3: "To dla mnie decyzja neutralna",
+            4: "To raczej dobra decyzja",
+            5: "To dla mnie bardzo dobra decyzja",
+        },
+        {
+            1: "Nie zamierzam się na to decydować",
+            2: "Raczej się na to nie zdecyduję",
+            3: "Jeszcze nie wiem, co z tym zrobię",
+            4: "Raczej się na to zdecyduję",
+            5: "Na pewno się na to zdecyduję",
+        },
+        {
+            1: "To zupełnie poza moim wyborem",
+            2: "To raczej nie mój wybór",
+            3: "To może być mój wybór, ale nie musi",
+            4: "To raczej mój wybór",
+            5: "To zdecydowanie mój wybór",
+        },
+        {
+            1: "Odrzucam tę opcję bez wahania",
+            2: "Skłaniam się do odrzucenia tej opcji",
+            3: "Nie mam wyraźnego stanowiska",
+            4: "Skłaniam się ku wybraniu tej opcji",
+            5: "Wybieram tę opcję bez wahania",
+        },
+        {
+            1: "Ta opcja jest całkowicie nieprzekonująca",
+            2: "Ta opcja jest raczej nieprzekonująca",
+            3: "Ta opcja jest dla mnie obojętna",
+            4: "Ta opcja jest raczej przekonująca",
+            5: "Ta opcja jest bardzo przekonująca",
+        },
+        ],
+        Language.EN: [
+        {
+            1: "I definitely would not choose this",
+            2: "I probably would not choose this",
+            3: "I am undecided",
+            4: "I probably would choose this",
+            5: "I definitely would choose this",
+        },
+        {
+            1: "This would be a bad choice for me",
+            2: "This is probably a bad choice for me",
+            3: "This feels like a neutral choice for me",
+            4: "This is probably a good choice for me",
+            5: "This would be a very good choice for me",
+        },
+        {
+            1: "I do not plan to go with this",
+            2: "I probably will not go with this",
+            3: "I still do not know what I would do",
+            4: "I probably will go with this",
+            5: "I certainly will go with this",
+        },
+        {
+            1: "This is completely outside my choice",
+            2: "This is likely not my choice",
+            3: "This could be my choice, but not necessarily",
+            4: "This is likely my choice",
+            5: "This is definitely my choice",
+        },
+        {
+            1: "I reject this option without hesitation",
+            2: "I lean toward rejecting this option",
+            3: "I have no clear stance",
+            4: "I lean toward choosing this option",
+            5: "I choose this option without hesitation",
+        },
+        {
+            1: "This option is completely unconvincing to me",
+            2: "This option is rather unconvincing to me",
+            3: "This option feels indifferent to me",
+            4: "This option is rather convincing to me",
+            5: "This option is highly convincing to me",
+        },
+        ],
+    },
 }
+
+# Backward-compatible default constant used by existing call sites.
+ANCHOR_SETS: Dict[Language, List[Dict[int, str]]] = ANCHOR_SETS_VARIANTS[DEFAULT_ANCHOR_VARIANT]
 
 
 # =============================================================================
@@ -594,6 +781,13 @@ def get_label(language: Language, key: str) -> str:
     return UI_LABELS.get(language, UI_LABELS[Language.EN]).get(key, key)
 
 
-def get_anchor_sets(language: Language) -> List[Dict[int, str]]:
-    """Get anchor statements for given language."""
-    return ANCHOR_SETS.get(language, ANCHOR_SETS[Language.EN])
+def get_anchor_sets(language: Language, variant: str | None = None) -> List[Dict[int, str]]:
+    """Get anchor statements for given language and optional variant."""
+    key = (variant or DEFAULT_ANCHOR_VARIANT).strip().lower()
+    variant_sets = ANCHOR_SETS_VARIANTS.get(key) or ANCHOR_SETS_VARIANTS[DEFAULT_ANCHOR_VARIANT]
+    return variant_sets.get(language, variant_sets[Language.EN])
+
+
+def get_anchor_variants() -> List[str]:
+    """Return available anchor variant keys."""
+    return sorted(ANCHOR_SETS_VARIANTS.keys())

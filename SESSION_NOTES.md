@@ -428,3 +428,172 @@ We cache every generated HTML/PDF via `processing_utils.save_file_to_cache` and 
 
 - Pushed: `origin/main` (GitHub) up to `03ad485`.
 - Not pushed intentionally: `hf/main` (Hugging Face) to keep deployment pending while calibration work continues.
+
+## Follow-up (2026-02-08) - Stage 2 (anchor + calibration) detailed execution log
+
+### Session objective
+- Continue Stage 2 work to close remaining production gaps after Stage 1.
+- Constraints held constant:
+  - hard gates unchanged:
+    - MAE <= 0.60
+    - Off-by-one >= 0.92
+    - Spearman drop <= 0.01
+    - max per-dataset MAE regression <= 0.10
+  - no relaxation of acceptance criteria.
+
+### High-level strategy used
+1. Improve base SSR signal first via anchor refinement (PL + EN), aligned to paper-style purchase-intent elicitation and **not** e-commerce-only semantics.
+2. Keep runtime temperature/epsilon fixed at calibration-consistent values (`T=1.0`, `eps=0.0`).
+3. Re-evaluate repeatedly on exactly the same external validation suite (Amazon 2023, Yelp, App Reviews, Allegro).
+4. Expand policy search space:
+   - global, domain, per-language policies,
+   - blend families,
+   - purchase-intent-specific hybrids.
+5. Refit artifacts after anchor updates.
+6. Compare “artifact A + artifact B” cross-combinations (old/new calibrator vs old/new policy) to identify best compromise.
+
+### Code-level changes completed in this stage
+
+#### 1) Anchor variants and selection framework
+- Added anchor-variant registry in `backend/app/i18n.py`:
+  - `paper_general_v1`
+  - `paper_general_v2`
+  - `paper_general_v3`
+- Added:
+  - `DEFAULT_ANCHOR_VARIANT`
+  - `get_anchor_variants()`
+  - `get_anchor_sets(language, variant=...)`
+- Default switched to: `paper_general_v3`.
+
+#### 2) Runtime domain naming alignment
+- `backend/app/services/simulation_engine.py`:
+  - changed SSR routing hint from `domain_hint="ecommerce"` to `domain_hint="purchase_intent"`.
+- `backend/app/services/score_calibration.py`:
+  - added backward-compatible domain aliasing:
+    - `purchase_intent -> ecommerce` when needed,
+    - `ecommerce -> purchase_intent` when needed.
+
+#### 3) Validation script expansion and diagnostics
+- `backend/scripts/validate_production_readiness.py`:
+  - added `--anchor-variant`,
+  - added paper-native diagnostics:
+    - KS similarity (`1 - KS distance`) on rounded 1..5 distributions,
+    - split-half ceiling proxy,
+    - correlation attainment proxy.
+  - added robust local-cache fallbacks for HF datasets in constrained environments.
+  - renamed/extended policy families:
+    - `purchase_intent_only_calibrated`,
+    - `purchase_domain_only_calibrated`,
+    - `purchase_hybrid_0.1 ... 0.9`,
+    - retained raw/global/pl/domain/blend baselines.
+
+#### 4) Training scripts upgraded for anchor variants
+- `backend/scripts/tune_ssr_hierarchical.py`:
+  - added `--anchor-variant`,
+  - propagated variant to report metadata and anchor embedding generation.
+- `backend/scripts/build_domain_calibration_policy.py`:
+  - added `--anchor-variant`,
+  - policy keys include `purchase_intent` (with `ecommerce` kept for compatibility),
+  - metadata expanded.
+- Added new script:
+  - `backend/scripts/build_global_calibrator.py`
+  - purpose: build single global calibrator with objective modes:
+    - `mae`
+    - `off1`
+    - `balanced`
+
+### Detailed experiment matrix and outcomes
+
+#### A) Anchor screening (small/fast)
+- Reports:
+  - `reports/production_readiness_validation_2026-02-07_anchor_screen_v1.md`
+  - `reports/production_readiness_validation_2026-02-07_anchor_screen_v2.md`
+  - `reports/production_readiness_validation_2026-02-07_anchor_screen_v3.md`
+- Sample sizing used for screening:
+  - Amazon: `80/category` (20 categories),
+  - Yelp/App/Allegro: `1200` each,
+  - bootstrap: `300`.
+- Summary:
+  - `v2` and `v3` improved objective versus `v1`,
+  - selected for full run: `paper_general_v3`.
+
+#### B) Full run after anchor refinement (`paper_general_v3`)
+- Report:
+  - `reports/production_readiness_validation_2026-02-07_stage2_anchor_refined_v3_full.md`
+- Notable change vs previous anchor baseline:
+  - stronger raw signal on multiple datasets,
+  - best policy switched behaviorally toward purchase-intent family,
+  - still overall `FAIL`.
+
+#### C) Retraining artifacts on `paper_general_v3`
+- Global calibrator retrain report:
+  - `reports/ssr_hierarchical_tuning_2026-02-07_anchor_v3_recal.md`
+- Full readiness with retrained artifacts:
+  - `reports/production_readiness_validation_2026-02-07_stage2_anchor_v3_retrained_full.md`
+- Best policy in this run:
+  - `purchase_intent_only_calibrated`
+- Key near-pass:
+  - MAE `0.6092` (target `<=0.60`)
+  - Off1 `0.9189` (target `>=0.92`)
+  - Spearman-drop and max-regression gates passed.
+
+#### D) Hybrid policy-space expansion
+- Report:
+  - `reports/production_readiness_validation_2026-02-07_stage2_policy_hybrid_search.md`
+- Added candidate families yielded expected tradeoff curve:
+  - lower MAE around `purchase_intent_only`,
+  - higher Off1 around stronger purchase-domain hybrids/domain policy.
+- No candidate met both MAE and Off1 gates simultaneously.
+
+#### E) Artifact combination experiments
+- Old calibrator + new policy:
+  - `reports/production_readiness_validation_2026-02-07_stage2_oldcal_newpolicy_hybrid.md`
+  - still `FAIL`.
+- New calibrator + old policy:
+  - `reports/production_readiness_validation_2026-02-07_stage2_newcal_oldpolicy_hybrid.md`
+  - still `FAIL`.
+
+#### F) Domain-policy data partition change
+- Modified policy builder to train:
+  - `general`: Yelp,
+  - `purchase_intent`: Amazon + App + Allegro.
+- Full run:
+  - `reports/production_readiness_validation_2026-02-07_stage2_policy_retrained_purchase_app.md`
+- Result:
+  - Off1 improved with stronger domain policies,
+  - MAE drifted upward too much,
+  - overall `FAIL`.
+
+#### G) Global calibrator objective sweeps (new script)
+- Off1-optimized global calibrator:
+  - report: `reports/production_readiness_validation_2026-02-07_stage2_global_off1_calibrator.md`
+  - outcome: Off1 improved, MAE worsened significantly -> `FAIL`.
+- Balanced-objective global calibrator:
+  - report: `reports/production_readiness_validation_2026-02-07_stage2_global_balanced_calibrator.md`
+  - outcome: still MAE too high -> `FAIL`.
+- Conclusion:
+  - global calibrator objective retuning alone cannot close both MAE + Off1 gates simultaneously on this benchmark mix.
+
+### Best known point retained at end of session
+- Chosen practical checkpoint for continuation:
+  - anchors: `paper_general_v3` (default),
+  - global calibrator: isotonic baseline retrained via hierarchical script,
+  - policy: baseline-compatible artifact (restored for stability).
+- Best near-pass metric snapshot to beat next:
+  - policy `purchase_intent_only_calibrated`
+  - MAE `0.6092`
+  - Off1 `0.9189`
+  - Spearman drop: pass
+  - max dataset MAE regression: pass
+
+### Why still not production-ready
+- Remaining gaps are small but persistent and coupled:
+  - reducing MAE tends to reduce Off1 below threshold,
+  - increasing Off1 tends to raise MAE above threshold.
+- Current gating failure is not due to missing infrastructure; it is due to unresolved objective tradeoff on external data.
+
+### Strong recommendation for next session
+1. Add `paper_general_v4` anchors (PL+EN) tuned explicitly for preserving high Off1 while avoiding MAE inflation on Yelp/App.
+2. Refit domain policy using stricter per-domain holdout diagnostics and possibly separate purchase-intent subdomains (`amazon_like`, `app_like`, `pl_retail`) if data supports it.
+3. Keep same hard gates and run only full-comparison experiments (no gate relaxation).
+4. Track a fixed “best-known” benchmark row and require explicit improvement before replacing runtime artifacts.
