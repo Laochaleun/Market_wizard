@@ -240,7 +240,10 @@ class SimulationEngine:
                 text_responses.append(ssr_text.strip())
             else:
                 text_responses.append(self._extract_purchase_intent_text(opinion))
-        ssr_results: List[SSRResult] = self.ssr_engine.rate_responses(text_responses)
+        ssr_results: List[SSRResult] = self.ssr_engine.rate_responses(
+            text_responses,
+            domain_hint="ecommerce",
+        )
 
         # Step 4: Build agent responses
         agent_responses: List[AgentResponse] = []

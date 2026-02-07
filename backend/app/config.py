@@ -10,6 +10,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Get absolute path to .env file in backend directory
 BACKEND_DIR = Path(__file__).parent.parent
 ENV_FILE = BACKEND_DIR / ".env"
+DEFAULT_SSR_CALIBRATION_ARTIFACT = BACKEND_DIR / "app" / "data" / "ssr_calibrator_default.json"
+DEFAULT_SSR_CALIBRATION_POLICY_ARTIFACT = BACKEND_DIR / "app" / "data" / "ssr_calibration_policy_default.json"
 
 
 class Settings(BaseSettings):
@@ -41,8 +43,11 @@ class Settings(BaseSettings):
     embedding_provider: Literal["local", "openai"] = "local"
     embedding_model: str = "BAAI/bge-m3"
     embedding_warmup: bool = True
-    ssr_temperature: float = 0.7
+    ssr_temperature: float = 1.0
     ssr_epsilon: float = 0.0
+    ssr_calibration_enabled: bool = True
+    ssr_calibration_artifact_path: str = str(DEFAULT_SSR_CALIBRATION_ARTIFACT)
+    ssr_calibration_policy_path: str = str(DEFAULT_SSR_CALIBRATION_POLICY_ARTIFACT)
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./market_wizard.db"

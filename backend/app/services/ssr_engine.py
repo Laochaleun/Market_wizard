@@ -11,10 +11,13 @@ to Likert scale ratings through semantic similarity with anchor statements.
 
 import numpy as np
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List
 
 from app.models import AnchorSet, LikertDistribution
+from app.config import get_settings
 from app.services.embedding_client import EmbeddingClient, get_embedding_client
+from app.services.score_calibration import DomainCalibrationPolicy, IsotonicCalibrator
 from app.i18n import Language, get_anchor_sets
 
 
@@ -25,6 +28,7 @@ class SSRResult:
     text_response: str
     likert_pmf: LikertDistribution
     expected_score: float
+    raw_expected_score: float
     raw_similarities: Dict[int, float]
 
 
@@ -43,6 +47,8 @@ class SSREngine:
         language: Language = Language.PL,
         temperature: float = 1.0,
         epsilon: float = 0.0,
+        score_calibrator: IsotonicCalibrator | None = None,
+        score_calibration_policy: DomainCalibrationPolicy | None = None,
     ):
         """
         Initialize the SSR Engine.
@@ -62,9 +68,50 @@ class SSREngine:
         self.language = language
         self.temperature = temperature
         self.epsilon = epsilon
+        if score_calibration_policy is not None:
+            self.score_calibration_policy = score_calibration_policy
+        elif score_calibrator is not None:
+            self.score_calibration_policy = None
+        else:
+            self.score_calibration_policy = self._load_default_calibration_policy()
+
+        self.score_calibrator = score_calibrator if score_calibrator is not None else self._load_default_calibrator()
 
         # Pre-compute anchor embeddings
         self._anchor_embeddings = self._compute_anchor_embeddings()
+
+    def _load_default_calibrator(self) -> IsotonicCalibrator | None:
+        settings = get_settings()
+        if not settings.ssr_calibration_enabled:
+            return None
+        if self.score_calibration_policy is not None:
+            return None
+        raw_path = (settings.ssr_calibration_artifact_path or "").strip()
+        if not raw_path:
+            return None
+        try:
+            path = Path(raw_path).expanduser().resolve()
+            if not path.exists():
+                return None
+            return IsotonicCalibrator.load_json(path)
+        except Exception:
+            # Keep runtime resilient; scoring must not fail on calibration loading.
+            return None
+
+    def _load_default_calibration_policy(self) -> DomainCalibrationPolicy | None:
+        settings = get_settings()
+        if not settings.ssr_calibration_enabled:
+            return None
+        raw_path = (settings.ssr_calibration_policy_path or "").strip()
+        if not raw_path:
+            return None
+        try:
+            path = Path(raw_path).expanduser().resolve()
+            if not path.exists():
+                return None
+            return DomainCalibrationPolicy.load_json(path)
+        except Exception:
+            return None
 
     def _compute_anchor_embeddings(self) -> List[Dict[int, np.ndarray]]:
         """Pre-compute embeddings for all anchor statements."""
@@ -148,7 +195,7 @@ class SSREngine:
 
         return pmf
 
-    def rate_response(self, text_response: str) -> SSRResult:
+    def rate_response(self, text_response: str, *, domain_hint: str | None = None) -> SSRResult:
         """
         Rate a single text response using SSR methodology.
         
@@ -180,7 +227,15 @@ class SSREngine:
         avg_pmf = self._scale_pmf(avg_pmf)
 
         # Compute expected Likert score
-        expected_score = sum(r * avg_pmf[r] for r in range(1, 6))
+        raw_expected_score = float(sum(r * avg_pmf[r] for r in range(1, 6)))
+        expected_score = raw_expected_score
+        calibrator = None
+        if self.score_calibration_policy is not None:
+            calibrator = self.score_calibration_policy.select(domain_hint=domain_hint)
+        elif self.score_calibrator is not None:
+            calibrator = self.score_calibrator
+        if calibrator is not None:
+            expected_score = float(calibrator.transform(np.array([raw_expected_score]))[0])
 
         # Convert to LikertDistribution
         likert_dist = LikertDistribution(
@@ -195,12 +250,13 @@ class SSREngine:
             text_response=text_response,
             likert_pmf=likert_dist,
             expected_score=expected_score,
+            raw_expected_score=raw_expected_score,
             raw_similarities=avg_pmf,
         )
 
-    def rate_responses(self, text_responses: List[str]) -> List[SSRResult]:
+    def rate_responses(self, text_responses: List[str], *, domain_hint: str | None = None) -> List[SSRResult]:
         """Rate multiple responses efficiently."""
-        return [self.rate_response(resp) for resp in text_responses]
+        return [self.rate_response(resp, domain_hint=domain_hint) for resp in text_responses]
 
     def aggregate_to_survey_pmf(self, results: List[SSRResult]) -> LikertDistribution:
         """

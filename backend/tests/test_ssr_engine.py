@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from app.models import LikertDistribution
+from app.services.score_calibration import DomainCalibrationPolicy, IsotonicCalibrator
 from app.services.ssr_engine import SSREngine, SSRResult
 from app.i18n import Language, get_anchor_sets
 
@@ -123,6 +124,48 @@ class TestSSREngine:
         for resp in responses:
             result = engine.rate_response(resp)
             assert 1.0 <= result.expected_score <= 5.0
+
+    def test_applies_score_calibration(self):
+        calibrator = IsotonicCalibrator(
+            x_sorted=np.array([1.0, 5.0], dtype=float),
+            y_fitted=np.array([2.0, 4.0], dtype=float),
+        )
+        engine = SSREngine(
+            embedding_client=MockEmbeddingClient(),
+            language=Language.EN,
+            score_calibrator=calibrator,
+        )
+
+        result = engine.rate_response("I love this, definitely buying!")
+        assert isinstance(result, SSRResult)
+        assert result.raw_expected_score > result.expected_score
+        assert 2.0 <= result.expected_score <= 4.0
+
+    def test_domain_policy_uses_domain_hint(self):
+        general = IsotonicCalibrator(
+            x_sorted=np.array([1.0, 5.0], dtype=float),
+            y_fitted=np.array([1.0, 5.0], dtype=float),
+        )
+        ecommerce = IsotonicCalibrator(
+            x_sorted=np.array([1.0, 5.0], dtype=float),
+            y_fitted=np.array([2.0, 4.0], dtype=float),
+        )
+        policy = DomainCalibrationPolicy(
+            default_domain="general",
+            calibrators={"general": general, "ecommerce": ecommerce},
+        )
+        engine = SSREngine(
+            embedding_client=MockEmbeddingClient(),
+            language=Language.EN,
+            score_calibration_policy=policy,
+        )
+
+        response = "I would definitely buy this product"
+        res_general = engine.rate_response(response, domain_hint="general")
+        res_ecommerce = engine.rate_response(response, domain_hint="ecommerce")
+
+        assert res_general.raw_expected_score == pytest.approx(res_ecommerce.raw_expected_score)
+        assert res_general.expected_score != pytest.approx(res_ecommerce.expected_score)
 
 
 class TestLikertDistribution:

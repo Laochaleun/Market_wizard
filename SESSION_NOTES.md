@@ -220,3 +220,191 @@ We cache every generated HTML/PDF via `processing_utils.save_file_to_cache` and 
   5. Optionally increase response stability in simulation by averaging 2-3 textual samples per persona.
 - Deliverable target for next session:
   - calibration script(s) + `before vs after` report on current benchmark suites.
+
+## Follow-up (2026-02-07) - Stage 1 calibration execution log (detailed)
+
+### Scope completed in this session
+- Implemented first-stage calibration infrastructure in code and runtime.
+- Added external production-readiness benchmark suite with hard pass/fail gates.
+- Added domain-aware calibration routing and policy artifacts for HF-compatible fallback.
+- Repeated full validation runs on external datasets after each material change.
+
+### 1) Core calibration infrastructure added
+
+#### New module
+- `backend/app/services/score_calibration.py`
+  - `IsotonicCalibrator`:
+    - `transform()`
+    - JSON serialization/deserialization (`isotonic_v1`)
+    - file save/load helpers.
+  - `DomainCalibrationPolicy`:
+    - domain-to-calibrator routing
+    - fallback to default domain
+    - JSON format `domain_calibration_v1`.
+  - `fit_isotonic_calibrator()` (PAV fit).
+
+#### SSR runtime integration
+- `backend/app/services/ssr_engine.py`
+  - Added calibration-aware scoring:
+    - supports single calibrator and domain policy artifact.
+    - added `domain_hint` in `rate_response()` and `rate_responses()`.
+  - Added `raw_expected_score` in `SSRResult` for diagnostics/comparison.
+  - Loading behavior:
+    - if policy artifact available and enabled -> policy routing,
+    - else fallback to single calibrator artifact,
+    - robust fail-safe (scoring does not crash on artifact load errors).
+
+#### Simulation routing
+- `backend/app/services/simulation_engine.py`
+  - SSR scoring call now passes `domain_hint="ecommerce"` for product PI path.
+
+#### Config + HF fallback defaults
+- `backend/app/config.py`
+  - `ssr_temperature` switched to `1.0` to match calibrator training setup.
+  - Added:
+    - `ssr_calibration_enabled`
+    - `ssr_calibration_artifact_path`
+    - `ssr_calibration_policy_path`
+  - Default fallback paths point to repo-stored artifacts under `backend/app/data/`.
+
+#### Env templates
+- `backend/.env.example`
+  - Added calibration keys and updated defaults for stage-1 runtime.
+
+### 2) Tuning script extended with calibration validation
+
+- `backend/scripts/tune_ssr_hierarchical.py`
+  - Added global isotonic calibration options:
+    - `--global-calibration`
+    - `--calibration-min-samples`
+    - `--calibration-cv-folds`
+    - `--calibration-holdout-ratio`
+    - `--calibration-artifact-out`
+  - Added OOF + holdout sections in report.
+  - Added artifact saving for winning config.
+  - Added `--skip-industries` to support offline fallback runs.
+
+### 3) Domain policy builder script added
+
+- `backend/scripts/build_domain_calibration_policy.py`
+  - Builds `domain_calibration_v1` artifact with two domains:
+    - `general`
+    - `ecommerce`
+  - Supports optimization modes:
+    - `--optimize mae`
+    - `--optimize off1`
+  - Uses holdout split per domain and stores diagnostics in artifact metadata.
+
+### 4) External production-readiness suite added
+
+- `backend/scripts/validate_production_readiness.py`
+  - External datasets used:
+    - Amazon Reviews 2023 (20 categories; HF JSONL stream)
+    - Yelp Review Full
+    - App Reviews
+    - Allegro KLEJ Reviews (PL)
+  - Metrics:
+    - MAE, Spearman, Exact, Off-by-one
+    - Bootstrap 95% CI (MAE/Off1/Spearman)
+    - Temporal tail check where timestamp/date is available
+  - Policy search included:
+    - `raw_only`
+    - `global_calibrated`
+    - `pl_only_calibrated`
+    - `ecommerce_only_calibrated`
+    - `blend_0.1 ... blend_0.9`
+    - `domain_policy_artifact` (if policy file present)
+  - Hard production gates:
+    - MAE <= 0.60
+    - Off-by-one >= 0.92
+    - Spearman drop <= 0.01
+    - max per-dataset MAE regression <= 0.10
+
+### 5) Artifacts produced / updated
+
+- `backend/app/data/ssr_calibrator_default.json`
+- `backend/app/data/ssr_calibration_policy_default.json`
+- `reports/ssr_hybrid_tuning_pl_precise_calibrated_2026-02-07.md`
+- `reports/ssr_calibrator_hybrid_pl_precise_2026-02-07.json`
+- `reports/production_readiness_validation_2026-02-07.md`
+
+### 6) Validation history and key numeric outcomes
+
+#### A) Hybrid tuning with calibration (HF + PL grouped)
+- Report: `reports/ssr_hybrid_tuning_pl_precise_calibrated_2026-02-07.md`
+- Scale:
+  - 27 groups
+  - 15,406 examples
+- Best config:
+  - `T=1|eps=0|anchor=avg6`
+- Holdout (for calibration effect):
+  - MAE improved strongly (`~0.99 -> ~0.53`)
+  - Exact improved strongly
+  - Spearman near-stable (expected for monotonic mapping).
+
+#### B) External readiness baseline (global calibrator)
+- Report: `reports/production_readiness_validation_2026-02-07.md`
+- Total rows:
+  - 13,000
+- Result:
+  - `FAIL`
+- Main issue:
+  - global calibrator hurt some general-review domains (notably Yelp off-by-one).
+
+#### C) Policy search without trained general domain
+- Best policy candidate:
+  - `ecommerce_only_calibrated`
+- Still `FAIL`:
+  - off-by-one below 0.92 gate
+  - MAE above 0.60 gate.
+
+#### D) Domain policy artifact (general + ecommerce) with separate fitting
+- Artifact chosen by policy search at one stage:
+  - `domain_policy_artifact` (best by aggregate objective)
+- Still `FAIL` vs hard gates:
+  - close-to-threshold MAE in one run, but off-by-one CI still below 0.92.
+
+#### E) Off1-optimized domain policy retrain
+- Re-trained `domain_calibration_v1` with `--optimize off1`.
+- Holdout diagnostics from builder script:
+  - general MAE: `0.9311 -> 0.8065`
+  - ecommerce MAE: `0.9925 -> 0.6575`
+- Re-ran full production validation:
+  - best policy again `ecommerce_only_calibrated`
+  - final decision remained `FAIL`.
+
+### 7) Runtime decisions applied
+
+- Switched runtime defaults to `SSR_TEMPERATURE=1.0` (critical consistency with calibration training).
+- Enabled calibration by default in code fallback for HF deployments (where local `.env` may be absent).
+- Left stage-1 policy as default artifact, but readiness verdict remains non-production.
+
+### 8) Test coverage updates
+
+- Added/updated tests:
+  - `backend/tests/test_score_calibration.py`
+  - `backend/tests/test_ssr_engine.py`
+- Status in-session:
+  - calibration + SSR tests passing repeatedly (`12 passed` on latest run set).
+
+### 9) Why Stage 1 is intentionally marked as incomplete for production
+
+- Infrastructure is complete for:
+  - training calibrators,
+  - loading artifacts in runtime,
+  - routing by domain,
+  - running external objective benchmark with CIs and gates.
+- However, objective production bars are still not met on external benchmark suite.
+
+### 10) Stage 2 recommendation (next session)
+
+1. Revisit base SSR signal quality before calibration:
+   - anchor refinement (domain language),
+   - embedding sensitivity tests (`BAAI/bge-m3` vs `text-embedding-3-small` in paper mode).
+2. Add paper-native evaluation outputs:
+   - KS similarity for distribution match,
+   - correlation attainment with split-half ceiling.
+3. Refit domain policies on expanded and cleaner splits:
+   - isolate Yelp-like “general reviews” from e-commerce intent framing.
+4. Keep same hard gates and rerun identical external validation:
+   - do not relax gates unless explicitly decided by product owner.

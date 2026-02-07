@@ -167,6 +167,11 @@ Market_wizard/
 | `RESEARCH_INTERPRETATION_MODEL` | Model do interpretacji treści źródeł | `gemini-3-flash-preview` |
 | `EMBEDDING_MODEL` | Model embeddingów | `BAAI/bge-m3` (lokalny) |
 | `EMBEDDING_WARMUP` | Warmup modelu lokalnego (pobranie przy starcie) | `true` |
+| `SSR_TEMPERATURE` | Temperatura SSR (zgodna z treningiem kalibratora) | `1.0` |
+| `SSR_EPSILON` | Regularizacja epsilon w mapowaniu PMF | `0.0` |
+| `SSR_CALIBRATION_ENABLED` | Włączenie kalibracji post-SSR | `true` |
+| `SSR_CALIBRATION_ARTIFACT_PATH` | Ścieżka do globalnego kalibratora (`isotonic_v1`) | `backend/app/data/ssr_calibrator_default.json` |
+| `SSR_CALIBRATION_POLICY_PATH` | Ścieżka do polityki domenowej (`domain_calibration_v1`) | `backend/app/data/ssr_calibration_policy_default.json` |
 | `GUS_API_KEY` | Opcjonalny - dla API GUS | - |
 
 ### Modele embeddingów (lokalne)
@@ -309,6 +314,79 @@ Parametr `temperature` kontroluje "zdecydowanie" modelu w ocenach.
 
 *   **1.0 (Domyślnie w aplikacji i w artykule)**: Wyniki są bardziej wygładzone, "bezpieczne". Model unika skrajności (1 i 5).
 *   **Niższe wartości**: Wyniki bardziej "ostre", większa skłonność do skrajności.
+
+## 🧭 Stage 1 Calibration (2026-02-07)
+
+Pierwszy etap kalibracji został wdrożony end-to-end: od treningu kalibratorów, przez runtime, po zewnętrzną walidację produkcyjną.
+
+### Co jest wdrożone
+
+- **Globalna kalibracja post-SSR (isotonic)** z walidacją OOF/holdout w:
+  - `backend/scripts/tune_ssr_hierarchical.py`
+- **Polityka domenowa kalibracji** (`domain_calibration_v1`) z routingiem:
+  - `backend/app/services/score_calibration.py`
+  - `backend/app/services/ssr_engine.py`
+- **Routing domeny w runtime**:
+  - `SimulationEngine` używa `domain_hint="ecommerce"` dla głównego scoringu PI.
+- **Artefakty fallback dla HF Spaces** (bez polegania na lokalnym `.env`):
+  - `backend/app/data/ssr_calibrator_default.json`
+  - `backend/app/data/ssr_calibration_policy_default.json`
+
+### Runtime defaults (spójne z treningiem kalibratora)
+
+- `SSR_TEMPERATURE=1.0`
+- `SSR_EPSILON=0.0`
+- `SSR_CALIBRATION_ENABLED=true`
+- `SSR_CALIBRATION_ARTIFACT_PATH=backend/app/data/ssr_calibrator_default.json`
+- `SSR_CALIBRATION_POLICY_PATH=backend/app/data/ssr_calibration_policy_default.json`
+
+### Skrypty etapu 1
+
+1. Trening/benchmark + raport kalibracji:
+
+```bash
+cd /Users/pawel/Market_wizard
+PYTHONPATH=/Users/pawel/Market_wizard/backend python backend/scripts/tune_ssr_hierarchical.py \
+  --model BAAI/bge-m3 \
+  --language en \
+  --anchor-language-mode auto \
+  --global-calibration isotonic \
+  --calibration-cv-folds 5 \
+  --calibration-holdout-ratio 0.2
+```
+
+2. Budowa domenowej polityki kalibracji:
+
+```bash
+cd /Users/pawel/Market_wizard
+PYTHONPATH=/Users/pawel/Market_wizard/backend python backend/scripts/build_domain_calibration_policy.py \
+  --model BAAI/bge-m3 \
+  --temperature 1.0 \
+  --epsilon 0.0 \
+  --optimize off1 \
+  --out /Users/pawel/Market_wizard/backend/app/data/ssr_calibration_policy_default.json
+```
+
+3. Zewnętrzna walidacja gotowości produkcyjnej:
+
+```bash
+cd /Users/pawel/Market_wizard
+PYTHONPATH=/Users/pawel/Market_wizard/backend python backend/scripts/validate_production_readiness.py \
+  --model BAAI/bge-m3 \
+  --temperature 1.0 \
+  --epsilon 0.0 \
+  --calibrator-path /Users/pawel/Market_wizard/backend/app/data/ssr_calibrator_default.json \
+  --policy-path /Users/pawel/Market_wizard/backend/app/data/ssr_calibration_policy_default.json \
+  --report-out /Users/pawel/Market_wizard/reports/production_readiness_validation_2026-02-07.md
+```
+
+### Status po Stage 1
+
+- Najlepsza polityka z testowanych: `ecommerce_only_calibrated`.
+- Zewnętrzne bramki produkcyjne wciąż niezaliczone (`FAIL`), głównie przez:
+  - `Off-by-one < 0.92`,
+  - `MAE > 0.60`.
+- Wniosek: Stage 1 dostarcza infrastrukturę i realną poprawę metryk, ale nie kończy tematu „production-ready”.
 
 ## 🧪 Testy zgodności z `semantic-similarity-rating`
 

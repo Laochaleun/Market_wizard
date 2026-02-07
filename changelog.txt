@@ -1,3 +1,61 @@
+v0.5.5 (2026-02-07) - Stage 1 calibration framework and external validation
+- Switched runtime SSR defaults to match calibration training setup:
+  - `SSR_TEMPERATURE=1.0` in `backend/app/config.py` and `backend/.env.example`.
+- Added first-stage post-SSR calibration runtime infrastructure:
+  - shared calibrator module `backend/app/services/score_calibration.py`,
+  - support for `isotonic_v1` artifacts and `domain_calibration_v1` policy artifacts,
+  - new settings:
+    - `SSR_CALIBRATION_ENABLED`
+    - `SSR_CALIBRATION_ARTIFACT_PATH`
+    - `SSR_CALIBRATION_POLICY_PATH`
+- Added default calibration artifacts in repository for HF fallback (no `.env` assumption):
+  - `backend/app/data/ssr_calibrator_default.json`
+  - `backend/app/data/ssr_calibration_policy_default.json`
+- Integrated domain-aware calibration in scoring path:
+  - `SSREngine` now accepts `domain_hint` and routes calibration via policy/default calibrator.
+  - `SimulationEngine` passes `domain_hint="ecommerce"` to SSR scoring.
+- Extended hierarchical tuning script to include calibration validation:
+  - OOF validation (`--calibration-cv-folds`),
+  - holdout validation (`--calibration-holdout-ratio`),
+  - artifact export (`--calibration-artifact-out`),
+  - offline fallback switch (`--skip-industries`).
+- Added domain calibration policy builder:
+  - `backend/scripts/build_domain_calibration_policy.py`
+  - supports domain-specific fitting (`general`, `ecommerce`) and `--optimize {mae,off1}`.
+- Added production-readiness validation suite:
+  - `backend/scripts/validate_production_readiness.py`
+  - evaluates external datasets (Amazon 2023, Yelp, App Reviews, Allegro),
+  - computes bootstrap CIs and production gates,
+  - compares calibration policies (`raw`, `global`, blends, domain policy artifact).
+- Added/updated tests:
+  - `backend/tests/test_score_calibration.py`
+  - `backend/tests/test_ssr_engine.py` (raw vs calibrated and domain-hint routing)
+- Stage 1 outcome:
+  - best policy on current benchmark: `ecommerce_only_calibrated`,
+  - production gates still not met (`Decision: FAIL`) on `reports/production_readiness_validation_2026-02-07.md`.
+
+v0.5.4 (2026-02-07)
+- Added post-SSR calibration validation workflow in `backend/scripts/tune_ssr_hierarchical.py`:
+  - out-of-fold calibration validation (`--calibration-cv-folds`),
+  - holdout validation (`--calibration-holdout-ratio`),
+  - explicit calibration artifact export (`--calibration-artifact-out`, JSON `isotonic_v1`).
+- Added shared calibration utilities module:
+  - `backend/app/services/score_calibration.py` (fit/transform/save/load).
+- Added runtime calibration support in SSR engine:
+  - new config flags: `SSR_CALIBRATION_ENABLED`, `SSR_CALIBRATION_ARTIFACT_PATH`,
+  - `SSREngine` now applies calibrator to expected score when enabled.
+- Added tests:
+  - `backend/tests/test_score_calibration.py`,
+  - calibration integration assertion in `backend/tests/test_ssr_engine.py`.
+- Added domain-aware calibration routing:
+  - `DomainCalibrationPolicy` in `backend/app/services/score_calibration.py`,
+  - `SSREngine` now supports `domain_hint` and policy artifact loading via `SSR_CALIBRATION_POLICY_PATH`,
+  - simulation flow sends `domain_hint="ecommerce"` for product intent scoring.
+- Added production-readiness validation suite:
+  - `backend/scripts/validate_production_readiness.py` (external datasets, CI gates, policy search).
+- Added default domain policy artifact:
+  - `backend/app/data/ssr_calibration_policy_default.json` (general=identity, ecommerce=calibrated).
+
 v0.5.3 (2026-02-07) - Pre-calibration baseline
 - Added hierarchical SSR tuning tooling:
   - `backend/scripts/tune_ssr_hierarchical.py` (global + per-group tuning, report generation)

@@ -30,6 +30,7 @@ from scipy.stats import spearmanr
 
 from app.i18n import Language, get_anchor_sets
 from app.services.embedding_client import LocalEmbeddingClient
+from app.services.score_calibration import IsotonicCalibrator, fit_isotonic_calibrator
 
 
 CATEGORIES_20 = [
@@ -235,6 +236,84 @@ def _global_rank_key(summary: dict[str, float]) -> tuple[float, float, float]:
     return (summary["spearman"], summary["off1"], -summary["mae"])
 
 
+def _stratified_holdout_indices(
+    labels: np.ndarray,
+    *,
+    holdout_ratio: float,
+    seed: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(seed)
+    labels_i = labels.astype(int)
+    train_parts: list[np.ndarray] = []
+    holdout_parts: list[np.ndarray] = []
+    all_idx = np.arange(labels.shape[0], dtype=int)
+    for cls in np.unique(labels_i):
+        idx = all_idx[labels_i == cls]
+        if idx.size == 0:
+            continue
+        idx = idx.copy()
+        rng.shuffle(idx)
+        n_hold = int(round(idx.size * holdout_ratio))
+        if holdout_ratio > 0 and n_hold == 0 and idx.size >= 2:
+            n_hold = 1
+        if n_hold >= idx.size and idx.size >= 2:
+            n_hold = idx.size - 1
+        holdout_parts.append(idx[:n_hold])
+        train_parts.append(idx[n_hold:])
+    train_idx = np.concatenate(train_parts) if train_parts else np.array([], dtype=int)
+    holdout_idx = np.concatenate(holdout_parts) if holdout_parts else np.array([], dtype=int)
+    return train_idx, holdout_idx
+
+
+def _stratified_kfold_indices(
+    labels: np.ndarray,
+    *,
+    n_splits: int,
+    seed: int,
+) -> list[np.ndarray]:
+    rng = np.random.default_rng(seed)
+    labels_i = labels.astype(int)
+    folds: list[list[int]] = [[] for _ in range(n_splits)]
+    all_idx = np.arange(labels.shape[0], dtype=int)
+    for cls in np.unique(labels_i):
+        idx = all_idx[labels_i == cls].copy()
+        rng.shuffle(idx)
+        for i, j in enumerate(idx):
+            folds[i % n_splits].append(int(j))
+    return [np.array(sorted(f), dtype=int) for f in folds]
+
+
+def _evaluate_calibration_oof(
+    scores: np.ndarray,
+    labels: np.ndarray,
+    *,
+    folds: int,
+    min_samples: int,
+    seed: int,
+) -> tuple[Metrics, Metrics]:
+    if scores.size < min_samples or np.unique(scores).size < 2 or folds < 2:
+        m = _metrics(scores, labels.astype(int).tolist())
+        return m, m
+    folds_idx = _stratified_kfold_indices(labels, n_splits=folds, seed=seed)
+    raw_pred = scores.copy()
+    cal_pred = scores.copy()
+    for i in range(folds):
+        val_idx = folds_idx[i]
+        if val_idx.size == 0:
+            continue
+        train_parts = [folds_idx[j] for j in range(folds) if j != i and folds_idx[j].size > 0]
+        if not train_parts:
+            continue
+        train_idx = np.concatenate(train_parts)
+        if train_idx.size < min_samples or np.unique(scores[train_idx]).size < 2:
+            continue
+        cal = fit_isotonic_calibrator(scores[train_idx], labels[train_idx])
+        cal_pred[val_idx] = cal.transform(scores[val_idx])
+    raw_m = _metrics(raw_pred, labels.astype(int).tolist())
+    cal_m = _metrics(cal_pred, labels.astype(int).tolist())
+    return raw_m, cal_m
+
+
 def _load_industry_group_rows(
     category: str,
     *,
@@ -342,6 +421,22 @@ def _score_group(
     return _metrics(scores, group.labels)
 
 
+def _score_group_with_scores(
+    group: GroupData,
+    cfg: Config,
+    anchor_mats: list[np.ndarray],  # each shape (d, 5)
+) -> np.ndarray:
+    idxs = _anchor_indices(cfg.anchor_mode, len(anchor_mats))
+    pmf_sets = [
+        _response_embeddings_to_pmf(group.response_embeddings, anchor_mats[i], epsilon=cfg.epsilon)
+        for i in idxs
+    ]
+    pmf_avg = np.mean(np.stack(pmf_sets, axis=0), axis=0)
+    pmf_avg = pmf_avg / pmf_avg.sum(axis=1)[:, None]
+    pmf_avg = _apply_temperature(pmf_avg, temperature=cfg.temperature)
+    return pmf_avg.dot(np.arange(1, 6, dtype=float))
+
+
 def _infer_group_anchor_language(group_name: str, default_language: Language) -> Language:
     """Infer anchor language for a given group.
 
@@ -391,6 +486,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=30000,
         help="Max streamed rows scanned per industry category.",
+    )
+    p.add_argument(
+        "--skip-industries",
+        action="store_true",
+        help="Skip Amazon 20-industry loading (useful for offline/local-only runs).",
     )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument(
@@ -444,6 +544,35 @@ def parse_args() -> argparse.Namespace:
         help="How many top configs to print in report.",
     )
     p.add_argument(
+        "--global-calibration",
+        choices=["none", "isotonic"],
+        default="none",
+        help="Optional global post-SSR calibration over pooled predictions.",
+    )
+    p.add_argument(
+        "--calibration-min-samples",
+        type=int,
+        default=1000,
+        help="Minimum pooled sample size required to fit global calibrator.",
+    )
+    p.add_argument(
+        "--calibration-cv-folds",
+        type=int,
+        default=5,
+        help="Number of folds for out-of-fold calibration validation.",
+    )
+    p.add_argument(
+        "--calibration-holdout-ratio",
+        type=float,
+        default=0.2,
+        help="Holdout share for final calibration validation (0 disables holdout).",
+    )
+    p.add_argument(
+        "--calibration-artifact-out",
+        default="",
+        help="Optional path to save fitted global calibration artifact (.json).",
+    )
+    p.add_argument(
         "--report-out",
         default="",
         help="Optional explicit report path (.md). Defaults to reports/ssr_hierarchical_tuning_YYYY-MM-DD.md",
@@ -469,10 +598,13 @@ def main() -> None:
     print(f"Anchor language: {language.value}")
     print(f"Anchor language mode: {args.anchor_language_mode}")
     print(f"Configs to evaluate: {len(configs)}")
-    print(
-        f"Industry sample: {args.sample_per_industry} x {len(CATEGORIES_20)} "
-        f"(max scan/category={args.max_scan_per_industry})"
-    )
+    if args.skip_industries:
+        print("Industry sample: skipped")
+    else:
+        print(
+            f"Industry sample: {args.sample_per_industry} x {len(CATEGORIES_20)} "
+            f"(max scan/category={args.max_scan_per_industry})"
+        )
 
     client = LocalEmbeddingClient(model_name=args.model)
 
@@ -495,30 +627,31 @@ def main() -> None:
         anchor_mats_by_language[lang] = mats
 
     groups: list[GroupData] = []
-    for i, cat in enumerate(CATEGORIES_20):
-        texts, labels = _load_industry_group_rows(
-            cat,
-            sample_size=args.sample_per_industry,
-            max_scan=args.max_scan_per_industry,
-            seed=args.seed + i,
-        )
-        if len(labels) == 0:
-            continue
-        embeddings = _embed_texts(
-            client,
-            texts,
-            batch_size=args.embed_batch_size,
-            max_text_chars=args.max_text_chars,
-        )
-        groups.append(
-            GroupData(
-                name=f"industry::{cat}",
-                texts=texts,
-                labels=labels,
-                response_embeddings=embeddings,
+    if not args.skip_industries:
+        for i, cat in enumerate(CATEGORIES_20):
+            texts, labels = _load_industry_group_rows(
+                cat,
+                sample_size=args.sample_per_industry,
+                max_scan=args.max_scan_per_industry,
+                seed=args.seed + i,
             )
-        )
-        print(f"Loaded industry group {cat}: n={len(labels)}")
+            if len(labels) == 0:
+                continue
+            embeddings = _embed_texts(
+                client,
+                texts,
+                batch_size=args.embed_batch_size,
+                max_text_chars=args.max_text_chars,
+            )
+            groups.append(
+                GroupData(
+                    name=f"industry::{cat}",
+                    texts=texts,
+                    labels=labels,
+                    response_embeddings=embeddings,
+                )
+            )
+            print(f"Loaded industry group {cat}: n={len(labels)}")
 
     if args.extra_csv:
         extra_path = Path(args.extra_csv).expanduser().resolve()
@@ -554,8 +687,8 @@ def main() -> None:
         raise RuntimeError("No groups loaded. Nothing to evaluate.")
 
     group_names = [g.name for g in groups]
-    by_cfg_group: dict[str, dict[str, Metrics]] = {c.key: {} for c in configs}
-    cfg_summaries: dict[str, dict[str, float]] = {}
+    by_cfg_group_raw: dict[str, dict[str, Metrics]] = {c.key: {} for c in configs}
+    cfg_summaries_raw: dict[str, dict[str, float]] = {}
 
     for c_idx, cfg in enumerate(configs, start=1):
         print(f"Evaluating config {c_idx}/{len(configs)}: {cfg.key}")
@@ -566,12 +699,15 @@ def main() -> None:
                 else language
             )
             mats = anchor_mats_by_language[lang_for_group]
-            by_cfg_group[cfg.key][g.name] = _score_group(g, cfg, mats)
-        cfg_summaries[cfg.key] = _weighted_summary(by_cfg_group[cfg.key].values())
+            scores = _score_group_with_scores(g, cfg, mats)
+            by_cfg_group_raw[cfg.key][g.name] = _metrics(scores, g.labels)
+        cfg_summaries_raw[cfg.key] = _weighted_summary(by_cfg_group_raw[cfg.key].values())
+    rank_summaries = cfg_summaries_raw
+    by_cfg_group_ranked = by_cfg_group_raw
 
     ranked_cfgs = sorted(
         configs,
-        key=lambda c: _global_rank_key(cfg_summaries[c.key]),
+        key=lambda c: _global_rank_key(rank_summaries[c.key]),
         reverse=True,
     )
     global_best = ranked_cfgs[0]
@@ -583,20 +719,86 @@ def main() -> None:
         best_cfg = max(
             configs,
             key=lambda c: (
-                by_cfg_group[c.key][g].spearman,
-                by_cfg_group[c.key][g].off_by_one_acc,
-                -by_cfg_group[c.key][g].mae,
+                by_cfg_group_ranked[c.key][g].spearman,
+                by_cfg_group_ranked[c.key][g].off_by_one_acc,
+                -by_cfg_group_ranked[c.key][g].mae,
             ),
         )
         group_best[g] = best_cfg
-        group_uplift[g] = by_cfg_group[best_cfg.key][g].spearman - by_cfg_group[global_best_key][g].spearman
+        group_uplift[g] = (
+            by_cfg_group_ranked[best_cfg.key][g].spearman
+            - by_cfg_group_ranked[global_best_key][g].spearman
+        )
 
     recommend_group_specific: list[str] = []
     for g in group_names:
-        n = by_cfg_group[global_best_key][g].n
+        n = by_cfg_group_ranked[global_best_key][g].n
         uplift = group_uplift[g]
         if n >= args.group_specific_min_n and uplift >= args.group_specific_min_uplift:
             recommend_group_specific.append(g)
+
+    # Calibration validation for the selected global-best config.
+    pooled_raw_scores: list[np.ndarray] = []
+    pooled_labels: list[np.ndarray] = []
+    for g in groups:
+        lang_for_group = (
+            _infer_group_anchor_language(g.name, language)
+            if args.anchor_language_mode == "auto"
+            else language
+        )
+        mats = anchor_mats_by_language[lang_for_group]
+        scores = _score_group_with_scores(g, global_best, mats)
+        pooled_raw_scores.append(scores)
+        pooled_labels.append(np.array(g.labels, dtype=float))
+    all_scores = np.concatenate(pooled_raw_scores) if pooled_raw_scores else np.array([], dtype=float)
+    all_labels = np.concatenate(pooled_labels) if pooled_labels else np.array([], dtype=float)
+
+    apparent_raw = _metrics(all_scores, all_labels.astype(int).tolist())
+    apparent_cal = apparent_raw
+    oof_raw = apparent_raw
+    oof_cal = apparent_raw
+    holdout_raw = apparent_raw
+    holdout_cal = apparent_raw
+    final_calibrator: IsotonicCalibrator | None = None
+    holdout_n = 0
+    train_n = int(all_scores.size)
+
+    if (
+        args.global_calibration == "isotonic"
+        and all_scores.size >= args.calibration_min_samples
+        and np.unique(all_scores).size >= 2
+    ):
+        final_calibrator = fit_isotonic_calibrator(all_scores, all_labels)
+        apparent_cal = _metrics(final_calibrator.transform(all_scores), all_labels.astype(int).tolist())
+        oof_raw, oof_cal = _evaluate_calibration_oof(
+            all_scores,
+            all_labels,
+            folds=args.calibration_cv_folds,
+            min_samples=args.calibration_min_samples,
+            seed=args.seed,
+        )
+        if args.calibration_holdout_ratio > 0:
+            train_idx, holdout_idx = _stratified_holdout_indices(
+                all_labels,
+                holdout_ratio=args.calibration_holdout_ratio,
+                seed=args.seed,
+            )
+            if (
+                holdout_idx.size > 0
+                and train_idx.size >= args.calibration_min_samples
+                and np.unique(all_scores[train_idx]).size >= 2
+            ):
+                train_n = int(train_idx.size)
+                holdout_n = int(holdout_idx.size)
+                holdout_fit = fit_isotonic_calibrator(all_scores[train_idx], all_labels[train_idx])
+                holdout_raw = _metrics(
+                    all_scores[holdout_idx],
+                    all_labels[holdout_idx].astype(int).tolist(),
+                )
+                holdout_cal = _metrics(
+                    holdout_fit.transform(all_scores[holdout_idx]),
+                    all_labels[holdout_idx].astype(int).tolist(),
+                )
 
     now = datetime.now()
     if args.report_out:
@@ -606,6 +808,15 @@ def main() -> None:
             Path(__file__).resolve().parents[2]
             / "reports"
             / f"ssr_hierarchical_tuning_{now.strftime('%Y-%m-%d')}.md"
+        )
+    artifact_path: Path | None = None
+    if args.calibration_artifact_out:
+        artifact_path = Path(args.calibration_artifact_out).expanduser().resolve()
+    elif args.global_calibration != "none":
+        artifact_path = (
+            Path(__file__).resolve().parents[2]
+            / "reports"
+            / f"ssr_calibrator_{now.strftime('%Y-%m-%d')}.json"
         )
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -617,20 +828,81 @@ def main() -> None:
     lines.append(f"- Anchor language: `{language.value}`")
     lines.append(f"- Anchor language mode: `{args.anchor_language_mode}`")
     lines.append(f"- Configs tested: `{len(configs)}`")
+    lines.append(f"- Skip industries: `{args.skip_industries}`")
+    lines.append(f"- Global calibration: `{args.global_calibration}`")
+    lines.append(f"- Calibration min samples: `{args.calibration_min_samples}`")
+    lines.append(f"- Calibration CV folds: `{args.calibration_cv_folds}`")
+    lines.append(f"- Calibration holdout ratio: `{args.calibration_holdout_ratio}`")
     lines.append(
         f"- Grid: temperatures={temperatures}, epsilons={epsilons}, "
         f"single_anchor_sets={bool(args.include_single_anchors)}"
     )
-    lines.append(
-        f"- Industry sample: `{args.sample_per_industry}` x `{len(CATEGORIES_20)}` "
-        f"(max_scan/category={args.max_scan_per_industry})"
-    )
+    if args.skip_industries:
+        lines.append("- Industry sample: `skipped`")
+    else:
+        lines.append(
+            f"- Industry sample: `{args.sample_per_industry}` x `{len(CATEGORIES_20)}` "
+            f"(max_scan/category={args.max_scan_per_industry})"
+        )
     lines.append(f"- Total groups evaluated: `{len(groups)}`")
     lines.append(f"- Total examples evaluated: `{sum(len(g.labels) for g in groups)}`")
     lines.append("")
 
+    lines.append("## Calibration Effect (Global Best Config)")
+    lines.append(f"- Config: `{global_best_key}`")
+    lines.append(f"- Apparent sample size: `{apparent_raw.n}`")
+    lines.append(
+        f"- Apparent Spearman: `{apparent_raw.spearman:.4f} -> {apparent_cal.spearman:.4f}` "
+        f"(`{apparent_cal.spearman - apparent_raw.spearman:+.4f}`)"
+    )
+    lines.append(
+        f"- Apparent MAE: `{apparent_raw.mae:.4f} -> {apparent_cal.mae:.4f}` "
+        f"(`{apparent_cal.mae - apparent_raw.mae:+.4f}`)"
+    )
+    lines.append(
+        f"- Apparent Off-by-one: `{apparent_raw.off_by_one_acc:.4f} -> {apparent_cal.off_by_one_acc:.4f}` "
+        f"(`{apparent_cal.off_by_one_acc - apparent_raw.off_by_one_acc:+.4f}`)"
+    )
+    lines.append(
+        f"- Apparent Exact: `{apparent_raw.exact_acc:.4f} -> {apparent_cal.exact_acc:.4f}` "
+        f"(`{apparent_cal.exact_acc - apparent_raw.exact_acc:+.4f}`)"
+    )
+    lines.append("")
+
+    lines.append("## Calibration Validation (OOF)")
+    lines.append(f"- Folds: `{args.calibration_cv_folds}`")
+    lines.append(f"- Spearman: `{oof_raw.spearman:.4f} -> {oof_cal.spearman:.4f}` (`{oof_cal.spearman - oof_raw.spearman:+.4f}`)")
+    lines.append(f"- MAE: `{oof_raw.mae:.4f} -> {oof_cal.mae:.4f}` (`{oof_cal.mae - oof_raw.mae:+.4f}`)")
+    lines.append(
+        f"- Off-by-one: `{oof_raw.off_by_one_acc:.4f} -> {oof_cal.off_by_one_acc:.4f}` "
+        f"(`{oof_cal.off_by_one_acc - oof_raw.off_by_one_acc:+.4f}`)"
+    )
+    lines.append(
+        f"- Exact: `{oof_raw.exact_acc:.4f} -> {oof_cal.exact_acc:.4f}` "
+        f"(`{oof_cal.exact_acc - oof_raw.exact_acc:+.4f}`)"
+    )
+    lines.append("")
+
+    lines.append("## Calibration Validation (Holdout)")
+    lines.append(f"- Holdout ratio: `{args.calibration_holdout_ratio}`")
+    lines.append(f"- Train n: `{train_n}` | Holdout n: `{holdout_n}`")
+    lines.append(
+        f"- Spearman: `{holdout_raw.spearman:.4f} -> {holdout_cal.spearman:.4f}` "
+        f"(`{holdout_cal.spearman - holdout_raw.spearman:+.4f}`)"
+    )
+    lines.append(f"- MAE: `{holdout_raw.mae:.4f} -> {holdout_cal.mae:.4f}` (`{holdout_cal.mae - holdout_raw.mae:+.4f}`)")
+    lines.append(
+        f"- Off-by-one: `{holdout_raw.off_by_one_acc:.4f} -> {holdout_cal.off_by_one_acc:.4f}` "
+        f"(`{holdout_cal.off_by_one_acc - holdout_raw.off_by_one_acc:+.4f}`)"
+    )
+    lines.append(
+        f"- Exact: `{holdout_raw.exact_acc:.4f} -> {holdout_cal.exact_acc:.4f}` "
+        f"(`{holdout_cal.exact_acc - holdout_raw.exact_acc:+.4f}`)"
+    )
+    lines.append("")
+
     lines.append("## Global Best Config")
-    gb = cfg_summaries[global_best_key]
+    gb = rank_summaries[global_best_key]
     lines.append(f"- Config: `{global_best_key}`")
     lines.append(f"- Weighted Spearman: `{gb['spearman']:.4f}`")
     lines.append(f"- Weighted MAE: `{gb['mae']:.4f}`")
@@ -640,7 +912,7 @@ def main() -> None:
 
     lines.append(f"## Top {min(args.top_k, len(ranked_cfgs))} Global Configs")
     for idx, cfg in enumerate(ranked_cfgs[: args.top_k], start=1):
-        s = cfg_summaries[cfg.key]
+        s = rank_summaries[cfg.key]
         lines.append(
             f"{idx}. `{cfg.key}` | spearman={s['spearman']:.4f} | "
             f"mae={s['mae']:.4f} | off1={s['off1']:.4f} | exact={s['exact']:.4f}"
@@ -651,10 +923,10 @@ def main() -> None:
     lines.append("| Group | n | Global Spearman | Best Config | Best Spearman | Uplift | Recommendation |")
     lines.append("|---|---:|---:|---|---:|---:|---|")
     for g in sorted(group_names):
-        n = by_cfg_group[global_best_key][g].n
-        g_sp = by_cfg_group[global_best_key][g].spearman
+        n = by_cfg_group_ranked[global_best_key][g].n
+        g_sp = by_cfg_group_ranked[global_best_key][g].spearman
         b_cfg = group_best[g]
-        b_sp = by_cfg_group[b_cfg.key][g].spearman
+        b_sp = by_cfg_group_ranked[b_cfg.key][g].spearman
         uplift = b_sp - g_sp
         rec = "group-specific" if g in recommend_group_specific else "global"
         lines.append(
@@ -690,12 +962,33 @@ def main() -> None:
         )
         lines.append("")
 
+    if final_calibrator is not None and artifact_path is not None:
+        final_calibrator.save_json(
+            artifact_path,
+            metadata={
+                "created_at": now.isoformat(),
+                "config_key": global_best_key,
+                "embedding_model": args.model,
+                "anchor_language": language.value,
+                "anchor_language_mode": args.anchor_language_mode,
+                "sample_count": int(all_scores.size),
+                "calibration_cv_folds": int(args.calibration_cv_folds),
+                "calibration_holdout_ratio": float(args.calibration_holdout_ratio),
+            },
+        )
+        lines.append("## Calibration Artifact")
+        lines.append(f"- Path: `{artifact_path}`")
+        lines.append("- Format: `isotonic_v1`")
+        lines.append("")
+
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     print("\n=== Done ===")
     print(f"Global best: {global_best_key}")
     print(f"Groups: {len(groups)} | Examples: {sum(len(g.labels) for g in groups)}")
     print(f"Report saved: {report_path}")
+    if final_calibrator is not None and artifact_path is not None:
+        print(f"Calibration artifact saved: {artifact_path}")
 
     if recommend_group_specific:
         print("\nGroups with recommended group-specific configs:")
