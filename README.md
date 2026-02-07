@@ -399,6 +399,30 @@ PY
 
 Oczekiwany rezultat: brak assertion error i komunikat `OK: PMF and temperature scaling are numerically equivalent.`
 
+### 4) Benchmark na danych rzeczywistych (wpływ embeddingów)
+
+Skrypt poniżej używa realnych danych z `amazon_reviews_multi` (Hugging Face, test split, EN)
+i mierzy zgodność SSR z etykietami 1-5 (MAE, Spearman, accuracy), a także różnice
+między modelami embeddingów:
+
+```bash
+cd /Users/pawel/Market_wizard/backend
+python scripts/evaluate_ssr_on_real_data.py \
+  --limit 1200 \
+  --language en \
+  --models all-MiniLM-L6-v2,BAAI/bge-m3
+```
+
+Opcjonalnie można zapisać predykcje per-próbka:
+
+```bash
+python scripts/evaluate_ssr_on_real_data.py \
+  --limit 1200 \
+  --language en \
+  --models all-MiniLM-L6-v2,BAAI/bge-m3 \
+  --csv-out /tmp/ssr_real_data_eval.csv
+```
+
 ## 📄 Raporty
 
 Po uruchomieniu symulacji możesz wygenerować pełny raport HTML zawierający:
