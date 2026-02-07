@@ -47,6 +47,7 @@ from app.i18n import Language, get_label
 from app.config import get_settings
 from app.services.embedding_client import warmup_embeddings
 
+settings = get_settings()
 
 # Store last simulation result for report generation
 _last_simulation_result = None
@@ -2795,7 +2796,7 @@ def create_interface():
                             temperature = gr.Slider(
                                 minimum=0.01, 
                                 maximum=2.0, 
-                                value=1.0, 
+                                value=float(settings.ssr_temperature), 
                                 step=0.01, 
                                 label="SSR Temperature / Temperatura",
                                 info="Lower = more decisive, Higher = smoother (paper 1.0) / Niższa = bardziej zdecydowane"

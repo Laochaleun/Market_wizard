@@ -48,7 +48,7 @@ pip install -e .
 ### 3. Konfiguracja
 
 ```bash
-cp backend/.env.sample backend/.env
+cp backend/.env.example backend/.env
 ```
 
 Edytuj `backend/.env`:

@@ -86,3 +86,79 @@ We cache every generated HTML/PDF via `processing_utils.save_file_to_cache` and 
 
 ## Screenshot of Error
 ![Download error](/Users/pawel/.gemini/antigravity/brain/55155640-d6a9-476c-8f95-31038b0f77a2/uploaded_media_1769801944368.png)
+
+## Follow-up (2026-02-07)
+
+### Demography/GUS and UI
+- Fixed gender mapping in UI/backend normalization so Polish `K` maps to backend `F`; English mode supports `F/M` directly.
+- Added tests for gender mapping and localization in reports:
+  - `backend/tests/test_frontend_gender_mapping.py`
+  - `backend/tests/test_report_gender_localization.py`
+- Added region/voivodeship targeting in persona generation flow and region-aware test:
+  - `backend/tests/test_persona_region_filter.py`
+- Unified demographic settings usage across analyses (simulation, A/B, price analysis, focus group), with focus-group size still controlled separately.
+
+### SSR parity and benchmarking vs semantic-similarity-rating
+- Added SSR parity test path and aligned Market Wizard SSR behavior with the reference `semantic-similarity-rating` engine.
+- Added/updated SSR test:
+  - `backend/tests/test_ssr_engine.py`
+- Added benchmark scripts for real datasets:
+  - `backend/scripts/evaluate_ssr_on_real_data.py`
+  - `backend/scripts/evaluate_ssr_20_industries.py`
+- Stored benchmark summary report:
+  - `reports/ssr_embedding_benchmark_2026-02-07.md`
+
+### Embedding model decision
+- Compared `all-MiniLM-L6-v2` vs `BAAI/bge-m3` on real-data benchmarks.
+- Set default embedding fallback in code to `BAAI/bge-m3`:
+  - `backend/app/config.py`
+- Note: HF Spaces may not use local `.env`; code fallback/default in config is the effective safety net for deployments.
+
+### Documentation and release tracking
+- Updated `README.md` with testing workflow, including compatibility checks against `semantic-similarity-rating`.
+- Updated `changelog.txt` with the latest entries (v0.5.2).
+
+### Git status / remotes
+- Latest released commit in this thread: `0f86363` (`Update changelog for SSR benchmarks and bge-m3 default`).
+- Pushed to both remotes:
+  - `origin/main` (GitHub)
+  - `hf/main` (Hugging Face Spaces)
+
+## Follow-up (2026-02-07) - Pre-calibration baseline checkpoint
+
+### Objective
+- Created a rollback-safe baseline commit before starting SSR calibration work.
+- Baseline chosen from large hybrid benchmarks: fixed-anchor setup (EN anchors), `T=0.7`, `epsilon=0.0`.
+
+### What was prepared
+- Added tuning and data-prep scripts:
+  - `backend/scripts/tune_ssr_hierarchical.py`
+  - `backend/scripts/validate_grouped_ratings_csv.py`
+  - `backend/scripts/build_poland_grouped_csv.py`
+  - `backend/scripts/ssr_grouped_ratings_template.csv`
+- Generated benchmark and hybrid reports:
+  - `reports/ssr_hierarchical_tuning_2026-02-07.md`
+  - `reports/ssr_hierarchical_tuning_2026-02-07_large.md`
+  - `reports/ssr_hybrid_tuning_pl_2026-02-07.md`
+  - `reports/ssr_hybrid_tuning_pl_precise_2026-02-07.md`
+  - `reports/ssr_hybrid_tuning_pl_precise_auto_anchor_2026-02-07.md`
+- Generated PL grouped datasets:
+  - `reports/pl_grouped_ratings_2026-02-07.csv`
+  - `reports/pl_grouped_ratings_precise_2026-02-07.csv`
+
+### Runtime defaults set from benchmark winner
+- `SSR_TEMPERATURE=0.7`
+- `SSR_EPSILON=0.0`
+- Applied in:
+  - `backend/app/config.py`
+  - `backend/app/services/simulation_engine.py`
+  - `frontend/main.py` (Advanced Settings default slider value)
+
+### Environment template cleanup
+- Canonical template: `backend/.env.example`
+- Removed duplicate `backend/.env.sample`
+- Updated setup docs in `README.md` to use `.env.example`
+
+### Calibration readiness note
+- This checkpoint is explicitly intended as the "before calibration" recovery point.
+- If post-calibration changes degrade quality, revert/reset to this commit and rerun from baseline.

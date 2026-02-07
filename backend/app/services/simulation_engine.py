@@ -24,6 +24,7 @@ from app.services.llm_client import LLMClient, get_llm_client
 from app.services.persona_manager import PersonaManager
 from app.services.ssr_engine import SSREngine, SSRResult
 from app.i18n import Language
+from app.config import get_settings
 
 
 class SimulationEngine:
@@ -46,12 +47,20 @@ class SimulationEngine:
 
 
         language: Language = Language.PL,
-        temperature: float = 1.0,
+        temperature: float | None = None,
+        epsilon: float | None = None,
         llm_temperature: float | None = None,
     ):
+        settings = get_settings()
+        ssr_temperature = settings.ssr_temperature if temperature is None else temperature
+        ssr_epsilon = settings.ssr_epsilon if epsilon is None else epsilon
         self.language = language
         self.llm_client = llm_client or get_llm_client(model_override)
-        self.ssr_engine = ssr_engine or SSREngine(language=language, temperature=temperature)
+        self.ssr_engine = ssr_engine or SSREngine(
+            language=language,
+            temperature=ssr_temperature,
+            epsilon=ssr_epsilon,
+        )
         self.persona_manager = persona_manager or PersonaManager(language=language)
         self.llm_temperature = llm_temperature
         self._logger = logging.getLogger(__name__)

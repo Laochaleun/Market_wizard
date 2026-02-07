@@ -1,3 +1,25 @@
+v0.5.3 (2026-02-07) - Pre-calibration baseline
+- Added hierarchical SSR tuning tooling:
+  - `backend/scripts/tune_ssr_hierarchical.py` (global + per-group tuning, report generation)
+  - `backend/scripts/validate_grouped_ratings_csv.py` (CSV validator for grouped labeled data)
+  - `backend/scripts/build_poland_grouped_csv.py` (Polish grouped dataset builder)
+  - `backend/scripts/ssr_grouped_ratings_template.csv` (input template)
+- Added benchmark reports for large-scale tuning and hybrid PL+industry runs:
+  - `reports/ssr_hierarchical_tuning_2026-02-07.md`
+  - `reports/ssr_hierarchical_tuning_2026-02-07_large.md`
+  - `reports/ssr_hybrid_tuning_pl_2026-02-07.md`
+  - `reports/ssr_hybrid_tuning_pl_precise_2026-02-07.md`
+  - `reports/ssr_hybrid_tuning_pl_precise_auto_anchor_2026-02-07.md`
+- Set runtime SSR defaults to the best fixed setup from benchmarks:
+  - `SSR_TEMPERATURE=0.7`
+  - `SSR_EPSILON=0.0`
+  - wired via `backend/app/config.py`, `backend/app/services/simulation_engine.py`, and UI default in `frontend/main.py`.
+- Unified environment templates and removed duplication:
+  - kept `backend/.env.example` as canonical template,
+  - removed `backend/.env.sample`,
+  - updated README setup command accordingly.
+- This commit is intentionally marked as a rollback-safe point before calibration work.
+
 v0.5.2 (2026-02-07)
 - Added SSR parity validation against `/Users/pawel/semantic-similarity-rating/semantic_similarity_rating` (core PMF + temperature scaling).
 - Updated and fixed SSR unit tests in Market Wizard to match current anchor set loading (`get_anchor_sets`).

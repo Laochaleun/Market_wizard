@@ -1,0 +1,7 @@
+group,text,label,country,industry,language,source,split,notes
+PL_Beauty_and_Personal_Care,"Bardzo podoba mi się skład i zapach, kupię ponownie.",5,PL,Beauty_and_Personal_Care,pl,allegro,train,"Przykład PL"
+PL_Beauty_and_Personal_Care,"Produkt jest ok, ale cena mogłaby być niższa.",3,PL,Beauty_and_Personal_Care,pl,allegro,train,"Przykład PL"
+PL_Electronics,"Działa poprawnie, jednak bateria trzyma krótko.",2,PL,Electronics,pl,allegro,validation,"Przykład PL"
+US_Electronics,"Great quality and very easy to use. I would buy again.",5,US,Electronics,en,amazon,test,"Example US"
+US_Electronics,"It is acceptable but not worth this price.",3,US,Electronics,en,amazon,test,"Example US"
+DE_Home_and_Kitchen,"Solid build and practical design for daily use.",4,DE,Home_and_Kitchen,en,amazon,test,"Example DE"

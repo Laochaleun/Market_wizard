@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     embedding_provider: Literal["local", "openai"] = "local"
     embedding_model: str = "BAAI/bge-m3"
     embedding_warmup: bool = True
+    ssr_temperature: float = 0.7
+    ssr_epsilon: float = 0.0
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./market_wizard.db"
