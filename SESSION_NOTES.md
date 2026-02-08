@@ -815,3 +815,446 @@ We cache every generated HTML/PDF via `processing_utils.save_file_to_cache` and 
 - Stage: **Stage 2B** (typed-domain calibration alignment with app purpose)
 - Decision status: still **not production-ready** under hard gates.
 - Key achievement: architecture and calibration routing now reflect app use-case and paper methodology more faithfully.
+
+## Follow-up (2026-02-08) - Stage 2C (v4.1 anchors + piecewise calibration)
+
+### Session objective
+- Execute the carry-forward plan from Stage 2B without changing hard gates:
+  - add `paper_general_v4.1` minimal anchor edits (only intensity 3/4 phrasing),
+  - compare isotonic vs piecewise domain calibration on full protocol.
+
+### Method constraints kept fixed
+- Paper-first constraints preserved.
+- Runtime-consistent SSR params preserved:
+  - `T=1.0`, `eps=0.0`
+- Typed-domain routing unchanged.
+- Full protocol used for decision-grade validation:
+  - 13k rows (4k Amazon, 3k Yelp, 3k App, 3k Allegro),
+  - bootstrap `1000`,
+  - split-half `300`.
+
+### Code changes completed
+- Added new anchor variant `paper_general_v4.1`:
+  - file: `backend/app/i18n.py`
+  - scope: minimal micro-edits focused on scale `3` / `4` wording in PL+EN.
+- Added piecewise calibration support (continuous two-segment isotonic):
+  - file: `backend/app/services/score_calibration.py`
+  - new calibrator type: `piecewise_isotonic_v1`
+  - runtime policy loader now supports both `isotonic_v1` and `piecewise_isotonic_v1`.
+- Extended domain policy builder with calibration-mode controls:
+  - file: `backend/scripts/build_domain_calibration_policy.py`
+  - new CLI flags:
+    - `--calibration-mode {isotonic,piecewise}`
+    - `--piecewise-split-quantile`
+- Tests updated:
+  - `backend/tests/test_i18n_anchors.py`
+  - `backend/tests/test_score_calibration.py`
+
+### Tests run (local)
+- `pytest -q backend/tests/test_i18n_anchors.py backend/tests/test_score_calibration.py`
+  - result: `9 passed`
+- `pytest -q backend/tests/test_ssr_engine.py backend/tests/test_score_calibration.py`
+  - result: `15 passed`
+
+### Full runs executed
+1. `v4.1 + typed MAE policy + isotonic`
+   - policy artifact:
+     - `reports/ssr_policy_v41_typed_full_mae_isotonic.json`
+   - full validation report:
+     - `reports/production_readiness_validation_2026-02-08_stage2_v41_typed_full_mae_isotonic.md`
+   - best policy row (`domain_policy_artifact`):
+     - MAE `0.6126`
+     - Off1 `0.9182`
+     - Spearman `0.7677`
+   - gates:
+     - MAE gate: fail
+     - Off1 gate: fail
+     - Spearman-drop gate: pass
+     - max dataset MAE regression gate: pass
+   - decision: `FAIL`
+
+2. `v4.1 + typed MAE policy + piecewise`
+   - policy artifact:
+     - `reports/ssr_policy_v41_typed_full_mae_piecewise.json`
+   - full validation report:
+     - `reports/production_readiness_validation_2026-02-08_stage2_v41_typed_full_mae_piecewise.md`
+   - best policy row (`domain_policy_artifact`):
+     - MAE `0.5797`
+     - Off1 `0.9156`
+     - Spearman `0.7687`
+   - gates:
+     - MAE gate: pass
+     - Off1 gate: fail
+     - Spearman-drop gate: pass
+     - max dataset MAE regression gate: pass
+   - decision: `FAIL`
+
+### Comparison vs current runtime best (typed v4 MAE)
+- Current runtime best baseline:
+  - report: `reports/production_readiness_validation_2026-02-08_stage2_v4_typed_full_mae.md`
+  - MAE `0.6143`, Off1 `0.9187`, Spearman `0.7674`
+- Isotonic v4.1:
+  - MAE improved (`0.6143 -> 0.6126`),
+  - Off1 decreased (`0.9187 -> 0.9182`).
+- Piecewise v4.1:
+  - MAE improved strongly (`0.6143 -> 0.5797`),
+  - Off1 decreased more (`0.9187 -> 0.9156`).
+
+### Runtime replacement decision
+- **No runtime artifact replacement performed** in this session.
+- Reason: neither candidate satisfies the hard Off1 gate (`>= 0.92`) and neither is a strict overall gate-closing improvement.
+
+### Additional experiment: MAE objective with explicit Off1 guard (2026-02-08)
+- Implemented Off1-guard controls in policy builder:
+  - `--mae-off1-floor`
+  - `--mae-off1-max-drop`
+- Run executed:
+  - policy: `reports/ssr_policy_v41_typed_full_mae_piecewise_off1guard.json`
+  - validation: `reports/production_readiness_validation_2026-02-08_stage2_v41_typed_full_mae_piecewise_off1guard.md`
+- Result:
+  - metrics were unchanged vs plain piecewise run:
+    - MAE `0.5797`
+    - Off1 `0.9156`
+    - Spearman `0.7687`
+  - decision: `FAIL`
+- Interpretation:
+  - Off1 guard was non-binding on the internal holdouts for trained domains (`best_alpha=1.0`),
+  - so it did not alter the fitted calibrators in this setup.
+
+### Sequential micro-edit run: `paper_general_v4.1a` (2026-02-08)
+- Change scope:
+  - one micro-edit at intensity level 4 in anchor set #1 (PL+EN),
+  - `v4.1a` reverted this phrase to stronger "probably buy" wording vs `v4.1` "leaning toward buying".
+- Artifacts:
+  - policy: `reports/ssr_policy_v41a_typed_full_mae_piecewise.json`
+  - report: `reports/production_readiness_validation_2026-02-08_stage2_v41a_typed_full_mae_piecewise.md`
+- Best policy metrics:
+  - MAE `0.5841`
+  - Off1 `0.9138`
+  - Spearman `0.7659`
+  - Decision: `FAIL`
+- Comparison:
+  - vs `v4.1 piecewise`: MAE worse (`0.5797 -> 0.5841`), Off1 worse (`0.9156 -> 0.9138`)
+  - vs runtime typed v4 MAE: MAE better (`0.6143 -> 0.5841`), Off1 worse (`0.9187 -> 0.9138`)
+- Runtime decision:
+  - no replacement.
+
+### Sequential micro-edit run: `paper_general_v4.1b` (2026-02-08)
+- Change scope:
+  - one micro-edit at intensity level 4 in anchor set #2 (PL+EN),
+  - `v4.1b` tightened level-4 likelihood wording (`dość/fairly likely` -> `raczej/somewhat likely`) while keeping paper-style generic phrasing.
+- Artifacts:
+  - policy: `reports/ssr_policy_v41b_typed_full_mae_piecewise.json`
+  - report: `reports/production_readiness_validation_2026-02-08_stage2_v41b_typed_full_mae_piecewise.md`
+- Best policy metrics:
+  - MAE `0.5804`
+  - Off1 `0.9178`
+  - Spearman `0.7697`
+  - Decision: `FAIL`
+- Comparison:
+  - vs `v4.1 piecewise`: MAE slightly worse (`0.5797 -> 0.5804`), Off1 better (`0.9156 -> 0.9178`)
+  - vs `v4.1a piecewise`: better on both MAE and Off1
+  - vs runtime typed v4 MAE: MAE much better (`0.6143 -> 0.5804`), Off1 still lower (`0.9187 -> 0.9178`)
+- Runtime decision:
+  - no replacement (Off1 gate still below `0.92`).
+
+### Sequential micro-edit run: `paper_general_v4.1c` (2026-02-08)
+- Change scope:
+  - one micro-edit at intensity level 4 in anchor set #3 (PL+EN),
+  - shifted level-4 wording toward likelihood phrasing while staying short and domain-neutral.
+- Artifacts:
+  - policy: `reports/ssr_policy_v41c_typed_full_mae_piecewise.json`
+  - report: `reports/production_readiness_validation_2026-02-08_stage2_v41c_typed_full_mae_piecewise.md`
+- Best policy metrics:
+  - MAE `0.5833`
+  - Off1 `0.9121`
+  - Spearman `0.7665`
+  - Decision: `FAIL`
+- Comparison:
+  - vs `v4.1b`: worse MAE and worse Off1
+  - vs `v4.1`: worse MAE and worse Off1
+  - vs runtime typed v4 MAE: better MAE, worse Off1
+- Runtime decision:
+  - no replacement.
+
+## Runtime decision update (2026-02-08, post v4.1x series)
+- Applied `paper_general_v4.1b` as active default anchor variant:
+  - `backend/app/i18n.py` -> `DEFAULT_ANCHOR_VARIANT = "paper_general_v4.1b"`
+- Applied `v4.1b` typed piecewise policy as active runtime default:
+  - `backend/app/data/ssr_calibration_policy_default.json`
+  - source artifact: `reports/ssr_policy_v41b_typed_full_mae_piecewise.json`
+- Rationale:
+  - among tested `v4.1/v4.1a/v4.1b/v4.1c`, `v4.1b` gave best Off1 while keeping MAE near the best MAE regime.
+
+## Follow-up (2026-02-08) - Steps 1+2+3 execution (off1-constrained objective, piecewise3 purchase, micro-sweep)
+
+### Step 1 implemented: constrained objective
+- `backend/scripts/build_domain_calibration_policy.py` extended with:
+  - `--optimize off1_constrained_mae`
+  - objective mix sampled from external benchmark domains
+  - objective constraint: Off1 floor (`--objective-off1-min`, default `0.92`)
+  - objective selector over blend alpha with MAE minimization under Off1 constraint
+
+### Step 2 implemented: 3-segment calibration for purchase domains
+- `backend/app/services/score_calibration.py` extended with:
+  - `piecewise3_isotonic_v1` calibrator type
+  - fit function with continuity across both split boundaries
+  - runtime policy loader compatibility for new type
+- `backend/scripts/build_domain_calibration_policy.py` extended with:
+  - `--purchase-calibration-mode` (default `piecewise3`)
+  - `--piecewise3-split-q1`, `--piecewise3-split-q2`
+
+### Step 1+2 full run result (`v4.1b`)
+- Policy artifact:
+  - `reports/ssr_policy_v41b_typed_full_off1constr_piecewise3.json`
+- Validation report:
+  - `reports/production_readiness_validation_2026-02-08_stage2_v41b_off1constr_piecewise3.md`
+- Best policy metrics:
+  - MAE `0.5914`
+  - Off1 `0.9164`
+  - Spearman `0.7582`
+  - Decision: `FAIL`
+- Comparison vs baseline `v4.1b piecewise+mae`:
+  - baseline: MAE `0.5804`, Off1 `0.9178`
+  - constrained+piecewise3 run is worse on both MAE and Off1
+
+### Step 3 implemented: local micro-sweep around `v4.1b` (single level-4 edits)
+1. `v4.1d` (single level-4 edit in anchor set #4)
+   - policy: `reports/ssr_policy_v41d_typed_full_off1constr_piecewise3.json`
+   - report: `reports/production_readiness_validation_2026-02-08_stage2_v41d_off1constr_piecewise3.md`
+   - result: MAE `0.5985`, Off1 `0.9121`, Spearman `0.7594` (`FAIL`)
+2. `v4.1e` (single level-4 edit in anchor set #6)
+   - policy: `reports/ssr_policy_v41e_typed_full_off1constr_piecewise3.json`
+   - report: `reports/production_readiness_validation_2026-02-08_stage2_v41e_off1constr_piecewise3.md`
+   - result: MAE `0.6298`, Off1 `0.9129`, Spearman `0.7581` (`FAIL`)
+
+### Outcome and runtime decision
+- None of steps 1+2+3 candidates improved the selected runtime baseline (`v4.1b piecewise+mae`).
+- Runtime defaults should remain unchanged:
+  - anchors default: `paper_general_v4.1b`
+  - policy default artifact from `reports/ssr_policy_v41b_typed_full_mae_piecewise.json`
+
+## Follow-up (2026-02-08) - Domain-specific alpha + piecewise3 quantile-grid rerun
+
+### What was changed
+- Step 1 refined:
+  - `off1_constrained_mae` now searches objective on domain-mix sample with **domain-specific alphas**:
+    - separate alpha for `general`, `purchase_intent_short_en`, `purchase_intent_short_pl`
+- Step 2 refined:
+  - purchase `piecewise3` now supports **quantile-grid search** over `(q1, q2)` candidates.
+- Step 3 rerun:
+  - micro-sweep around `v4.1b` using this new method (`v4.1b`, `v4.1d`, `v4.1e`).
+
+### Full-run results (new method)
+1. `v4.1b`:
+   - policy: `reports/ssr_policy_v41b_typed_full_off1constr_piecewise3_domainalpha.json`
+   - report: `reports/production_readiness_validation_2026-02-08_stage2_v41b_off1constr_piecewise3_domainalpha.md`
+   - MAE `0.6188`, Off1 `0.9199`, Spearman `0.7587` (`FAIL`)
+2. `v4.1d`:
+   - policy: `reports/ssr_policy_v41d_typed_full_off1constr_piecewise3_domainalpha.json`
+   - report: `reports/production_readiness_validation_2026-02-08_stage2_v41d_off1constr_piecewise3_domainalpha.md`
+   - MAE `0.6143`, Off1 `0.9147`, Spearman `0.7548` (`FAIL`)
+3. `v4.1e`:
+   - policy: `reports/ssr_policy_v41e_typed_full_off1constr_piecewise3_domainalpha.json`
+   - report: `reports/production_readiness_validation_2026-02-08_stage2_v41e_off1constr_piecewise3_domainalpha.md`
+   - MAE `0.6131`, Off1 `0.9130`, Spearman `0.7603` (`FAIL`)
+
+### Diagnostic observation
+- Objective optimizer selected same alpha pattern in all runs:
+  - `alpha_general = alpha_purchase_en = alpha_purchase_pl = 1.0`
+- Best quantile pair selected consistently:
+  - `(q1, q2) = (0.45, 0.80)`
+- This indicates current objective search remained effectively non-binding on alpha and mostly shifted quantiles.
+
+### Decision
+- New domain-alpha + quantile-grid method did **not** beat baseline `v4.1b piecewise+mae` (`MAE 0.5804`, `Off1 0.9178`).
+- Runtime defaults remain unchanged.
+
+## Follow-up (2026-02-08) - Trust region trial
+
+### Implementation
+- Added `trust_region_v1` calibrator wrapper:
+  - file: `backend/app/services/score_calibration.py`
+  - behavior: limits calibrated shift relative to raw score by per-domain `max_delta`.
+- Added trust-region controls to policy builder:
+  - file: `backend/scripts/build_domain_calibration_policy.py`
+  - flags:
+    - `--trust-region-delta-general`
+    - `--trust-region-delta-purchase-en`
+    - `--trust-region-delta-purchase-pl`
+    - `--trust-region-delta-purchase-agg`
+- Added tests:
+  - `backend/tests/test_score_calibration.py` (trust region roundtrip + bounds assertions)
+
+### Run executed
+- Policy:
+  - `reports/ssr_policy_v41b_typed_full_mae_piecewise_trustregion_v1.json`
+- Validation:
+  - `reports/production_readiness_validation_2026-02-08_stage2_v41b_typed_full_mae_piecewise_trustregion_v1.md`
+- Deltas used:
+  - general `0.35`
+  - purchase EN `0.20`
+  - purchase PL `0.20`
+  - purchase aggregate `0.20`
+
+### Result
+- Best policy row:
+  - MAE `0.7965`
+  - Off1 `0.9266`
+  - Spearman `0.7244`
+  - Decision: `FAIL`
+- Interpretation:
+  - trust region can push Off1 above gate,
+  - but with these deltas it over-degraded MAE.
+- Runtime decision:
+  - no replacement.
+
+### Trust-region quick grid (near no-trust)
+- Base policy used: `v4.1b piecewise+mae`
+  - `reports/ssr_policy_v41b_typed_full_mae_piecewise.json`
+- Grid executed (general_delta, purchase_delta):
+  1. `g12_p10` -> (1.2, 1.0)
+     - report: `reports/production_readiness_validation_2026-02-08_stage2_v41b_trustgrid_g12_p10.md`
+     - MAE `0.5824`, Off1 `0.9178`
+  2. `g10_p08` -> (1.0, 0.8)
+     - report: `reports/production_readiness_validation_2026-02-08_stage2_v41b_trustgrid_g10_p08.md`
+     - MAE `0.6094`, Off1 `0.9179`
+  3. `g09_p07` -> (0.9, 0.7)
+     - report: `reports/production_readiness_validation_2026-02-08_stage2_v41b_trustgrid_g09_p07.md`
+     - MAE `0.6330`, Off1 `0.9183`
+  4. `g08_p06` -> (0.8, 0.6)
+     - report: `reports/production_readiness_validation_2026-02-08_stage2_v41b_trustgrid_g08_p06.md`
+     - MAE `0.6606`, Off1 `0.9203`
+- Baseline reference:
+  - `reports/production_readiness_validation_2026-02-08_stage2_v41b_typed_full_mae_piecewise.md`
+  - MAE `0.5804`, Off1 `0.9178`
+
+### Grid conclusion
+- Lower deltas increase Off1 but strongly inflate MAE.
+- No grid point satisfies both hard gates (`MAE <= 0.60` and `Off1 >= 0.92`).
+- Closest trust-grid compromise is `g12_p10`, but it is not better than baseline.
+
+## Follow-up (2026-02-08) - Option 1 trial (entropy-aware / temperature-aware calibration)
+
+### Implementation
+- Added `entropy_aware_v1` calibrator:
+  - file: `backend/app/services/score_calibration.py`
+  - behavior: routes to low/high branch by normalized PMF entropy threshold.
+- Extended SSR runtime to pass uncertainty signal (normalized entropy) into calibrator transform:
+  - file: `backend/app/services/ssr_engine.py`
+- Extended training/validation scoring paths to produce uncertainty from PMF:
+  - files:
+    - `backend/scripts/build_domain_calibration_policy.py`
+    - `backend/scripts/validate_production_readiness.py`
+- Added tests:
+  - `backend/tests/test_score_calibration.py` (entropy-aware roundtrip/switch behavior)
+
+### Run executed
+- Policy artifact:
+  - `reports/ssr_policy_v41b_typed_full_mae_entropy_piecewise_q60.json`
+- Validation report:
+  - `reports/production_readiness_validation_2026-02-08_stage2_v41b_typed_full_mae_entropy_piecewise_q60.md`
+- Metrics (best policy row):
+  - MAE `0.6554`
+  - Off1 `0.9053`
+  - Spearman `0.7318`
+  - Decision: `FAIL`
+
+### Conclusion
+- In this first configuration, entropy-aware calibration underperformed strongly versus baseline `v4.1b piecewise+mae` (`0.5804 / 0.9178`).
+- No runtime replacement.
+
+## Detailed Experiment Registry (2026-02-08)
+
+### Canonical baseline to beat
+- Anchor variant: `paper_general_v4.1b`
+- Policy artifact: `reports/ssr_policy_v41b_typed_full_mae_piecewise.json`
+- Validation report: `reports/production_readiness_validation_2026-02-08_stage2_v41b_typed_full_mae_piecewise.md`
+- Metrics:
+  - MAE `0.5804`
+  - Off1 `0.9178`
+  - Spearman `0.7697`
+- Status:
+  - best practical compromise in current branch
+  - still `FAIL` vs hard gates (`MAE <= 0.60`, `Off1 >= 0.92`)
+
+### Runtime defaults currently active
+- `backend/app/i18n.py`
+  - `DEFAULT_ANCHOR_VARIANT = "paper_general_v4.1b"`
+- `backend/app/data/ssr_calibration_policy_default.json`
+  - sourced from: `reports/ssr_policy_v41b_typed_full_mae_piecewise.json`
+- Global calibrator path unchanged from prior stage:
+  - `backend/app/data/ssr_calibrator_default.json`
+
+### Full validation reports generated in this continuation
+1. `reports/production_readiness_validation_2026-02-08_stage2_v41b_off1constr_piecewise3.md`
+   - MAE `0.5914`, Off1 `0.9164`, Spearman `0.7582`
+2. `reports/production_readiness_validation_2026-02-08_stage2_v41d_off1constr_piecewise3.md`
+   - MAE `0.5985`, Off1 `0.9121`, Spearman `0.7594`
+3. `reports/production_readiness_validation_2026-02-08_stage2_v41e_off1constr_piecewise3.md`
+   - MAE `0.6298`, Off1 `0.9129`, Spearman `0.7581`
+4. `reports/production_readiness_validation_2026-02-08_stage2_v41b_off1constr_piecewise3_domainalpha.md`
+   - MAE `0.6188`, Off1 `0.9199`, Spearman `0.7587`
+5. `reports/production_readiness_validation_2026-02-08_stage2_v41d_off1constr_piecewise3_domainalpha.md`
+   - MAE `0.6143`, Off1 `0.9147`, Spearman `0.7548`
+6. `reports/production_readiness_validation_2026-02-08_stage2_v41e_off1constr_piecewise3_domainalpha.md`
+   - MAE `0.6131`, Off1 `0.9130`, Spearman `0.7603`
+7. `reports/production_readiness_validation_2026-02-08_stage2_v41b_typed_full_mae_piecewise_trustregion_v1.md`
+   - MAE `0.7965`, Off1 `0.9266`, Spearman `0.7244`
+8. `reports/production_readiness_validation_2026-02-08_stage2_v41b_trustgrid_g12_p10.md`
+   - MAE `0.5824`, Off1 `0.9178`, Spearman `0.7696`
+9. `reports/production_readiness_validation_2026-02-08_stage2_v41b_trustgrid_g10_p08.md`
+   - MAE `0.6094`, Off1 `0.9179`, Spearman `0.7666`
+10. `reports/production_readiness_validation_2026-02-08_stage2_v41b_trustgrid_g09_p07.md`
+    - MAE `0.6330`, Off1 `0.9183`, Spearman `0.7664`
+11. `reports/production_readiness_validation_2026-02-08_stage2_v41b_trustgrid_g08_p06.md`
+    - MAE `0.6606`, Off1 `0.9203`, Spearman `0.7655`
+12. `reports/production_readiness_validation_2026-02-08_stage2_v41b_typed_full_mae_entropy_piecewise_q60.md`
+    - MAE `0.6554`, Off1 `0.9053`, Spearman `0.7318`
+
+### Policy artifacts generated in this continuation
+- `reports/ssr_policy_v41b_typed_full_off1constr_piecewise3.json`
+- `reports/ssr_policy_v41d_typed_full_off1constr_piecewise3.json`
+- `reports/ssr_policy_v41e_typed_full_off1constr_piecewise3.json`
+- `reports/ssr_policy_v41b_typed_full_off1constr_piecewise3_domainalpha.json`
+- `reports/ssr_policy_v41d_typed_full_off1constr_piecewise3_domainalpha.json`
+- `reports/ssr_policy_v41e_typed_full_off1constr_piecewise3_domainalpha.json`
+- `reports/ssr_policy_v41b_typed_full_mae_piecewise_trustregion_v1.json`
+- `reports/ssr_policy_v41b_typed_full_mae_piecewise_trustgrid_g12_p10.json`
+- `reports/ssr_policy_v41b_typed_full_mae_piecewise_trustgrid_g10_p08.json`
+- `reports/ssr_policy_v41b_typed_full_mae_piecewise_trustgrid_g09_p07.json`
+- `reports/ssr_policy_v41b_typed_full_mae_piecewise_trustgrid_g08_p06.json`
+- `reports/ssr_policy_v41b_typed_full_mae_entropy_piecewise_q60.json`
+
+### Code modules changed during this continuation
+- `backend/app/services/score_calibration.py`
+  - added: `piecewise3_isotonic_v1`, `trust_region_v1`, `entropy_aware_v1`
+  - loader now supports these calibrator types.
+- `backend/scripts/build_domain_calibration_policy.py`
+  - added: constrained objective variants, purchase mode override, quantile grids, domain-specific alpha search, trust-region flags, entropy-aware training path.
+- `backend/scripts/validate_production_readiness.py`
+  - scoring path now computes uncertainty (PMF entropy) and passes it into calibrators.
+- `backend/app/services/ssr_engine.py`
+  - runtime path now computes per-response PMF entropy and passes uncertainty into calibrator `transform()`.
+- `backend/app/i18n.py`
+  - added anchor variants: `paper_general_v4.1d`, `paper_general_v4.1e`
+  - default remains `paper_general_v4.1b`.
+- tests:
+  - `backend/tests/test_score_calibration.py`
+  - `backend/tests/test_i18n_anchors.py`
+
+### Validation protocol consistency (preserved)
+- anchor methodology: paper-style, short generic statements, no direct Likert elicitation
+- SSR core constants: `T=1.0`, `eps=0.0`
+- external protocol: 13k rows, bootstrap `1000`, split-half `300`
+- hard gates unchanged:
+  - MAE `<= 0.60`
+  - Off1 `>= 0.92`
+  - Spearman drop `<= 0.01`
+  - max dataset MAE regression `<= 0.10`
+
+### Practical takeaway
+- Current frontier remains a tight MAE/Off1 trade-off:
+  - trust-region can push Off1 up but quickly raises MAE,
+  - entropy-aware variant (tested at q60) degraded both MAE and Off1,
+  - constrained objective / piecewise3 / domain-alpha searches did not beat baseline.

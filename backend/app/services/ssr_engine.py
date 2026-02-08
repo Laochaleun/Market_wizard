@@ -228,6 +228,8 @@ class SSREngine:
 
         # Compute expected Likert score
         raw_expected_score = float(sum(r * avg_pmf[r] for r in range(1, 6)))
+        pmf_vals = np.array([avg_pmf[r] for r in range(1, 6)], dtype=float)
+        entropy = float(-(pmf_vals * np.log(np.clip(pmf_vals, 1e-12, 1.0))).sum() / np.log(5.0))
         expected_score = raw_expected_score
         calibrator = None
         if self.score_calibration_policy is not None:
@@ -235,7 +237,12 @@ class SSREngine:
         elif self.score_calibrator is not None:
             calibrator = self.score_calibrator
         if calibrator is not None:
-            expected_score = float(calibrator.transform(np.array([raw_expected_score]))[0])
+            expected_score = float(
+                calibrator.transform(
+                    np.array([raw_expected_score]),
+                    uncertainty=np.array([entropy]),
+                )[0]
+            )
 
         # Convert to LikertDistribution
         likert_dist = LikertDistribution(

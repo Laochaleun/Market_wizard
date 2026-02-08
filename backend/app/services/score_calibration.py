@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeAlias
 
 import numpy as np
 
@@ -18,7 +19,7 @@ class IsotonicCalibrator:
     clip_min: float = 1.0
     clip_max: float = 5.0
 
-    def transform(self, x: np.ndarray) -> np.ndarray:
+    def transform(self, x: np.ndarray, *, uncertainty: np.ndarray | None = None) -> np.ndarray:
         arr = np.asarray(x, dtype=float)
         if self.x_sorted.size == 0:
             return np.clip(arr, self.clip_min, self.clip_max)
@@ -69,11 +70,204 @@ class IsotonicCalibrator:
 
 
 @dataclass(frozen=True)
+class PiecewiseIsotonicCalibrator:
+    """Two-segment monotonic calibrator with continuity at split point."""
+
+    split_x: float
+    lower: IsotonicCalibrator
+    upper: IsotonicCalibrator
+
+    def transform(self, x: np.ndarray, *, uncertainty: np.ndarray | None = None) -> np.ndarray:
+        arr = np.asarray(x, dtype=float)
+        if arr.size == 0:
+            return arr
+        out = np.empty_like(arr, dtype=float)
+        lower_mask = arr <= self.split_x
+        if np.any(lower_mask):
+            out[lower_mask] = self.lower.transform(arr[lower_mask])
+        if np.any(~lower_mask):
+            out[~lower_mask] = self.upper.transform(arr[~lower_mask])
+        return np.clip(out, self.lower.clip_min, self.lower.clip_max)
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "piecewise_isotonic_v1",
+            "split_x": float(self.split_x),
+            "lower": self.lower.to_dict(),
+            "upper": self.upper.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict) -> "PiecewiseIsotonicCalibrator":
+        if payload.get("type") != "piecewise_isotonic_v1":
+            raise ValueError(f"Unsupported calibrator type: {payload.get('type')}")
+        lower = IsotonicCalibrator.from_dict(payload["lower"])
+        upper = IsotonicCalibrator.from_dict(payload["upper"])
+        return cls(
+            split_x=float(payload.get("split_x", 3.0)),
+            lower=lower,
+            upper=upper,
+        )
+
+
+@dataclass(frozen=True)
+class Piecewise3IsotonicCalibrator:
+    """Three-segment monotonic calibrator with continuity at split points."""
+
+    split_x1: float
+    split_x2: float
+    lower: IsotonicCalibrator
+    middle: IsotonicCalibrator
+    upper: IsotonicCalibrator
+
+    def transform(self, x: np.ndarray, *, uncertainty: np.ndarray | None = None) -> np.ndarray:
+        arr = np.asarray(x, dtype=float)
+        if arr.size == 0:
+            return arr
+        out = np.empty_like(arr, dtype=float)
+        lower_mask = arr <= self.split_x1
+        middle_mask = (arr > self.split_x1) & (arr <= self.split_x2)
+        upper_mask = arr > self.split_x2
+        if np.any(lower_mask):
+            out[lower_mask] = self.lower.transform(arr[lower_mask])
+        if np.any(middle_mask):
+            out[middle_mask] = self.middle.transform(arr[middle_mask])
+        if np.any(upper_mask):
+            out[upper_mask] = self.upper.transform(arr[upper_mask])
+        return np.clip(out, self.lower.clip_min, self.lower.clip_max)
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "piecewise3_isotonic_v1",
+            "split_x1": float(self.split_x1),
+            "split_x2": float(self.split_x2),
+            "lower": self.lower.to_dict(),
+            "middle": self.middle.to_dict(),
+            "upper": self.upper.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict) -> "Piecewise3IsotonicCalibrator":
+        if payload.get("type") != "piecewise3_isotonic_v1":
+            raise ValueError(f"Unsupported calibrator type: {payload.get('type')}")
+        lower = IsotonicCalibrator.from_dict(payload["lower"])
+        middle = IsotonicCalibrator.from_dict(payload["middle"])
+        upper = IsotonicCalibrator.from_dict(payload["upper"])
+        return cls(
+            split_x1=float(payload.get("split_x1", 2.8)),
+            split_x2=float(payload.get("split_x2", 3.6)),
+            lower=lower,
+            middle=middle,
+            upper=upper,
+        )
+
+
+@dataclass(frozen=True)
+class TrustRegionCalibrator:
+    """Wraps a base calibrator and limits shift from raw score by max_delta."""
+
+    base: "AnyCalibrator"
+    max_delta: float
+
+    def transform(self, x: np.ndarray, *, uncertainty: np.ndarray | None = None) -> np.ndarray:
+        arr = np.asarray(x, dtype=float)
+        base_pred = self.base.transform(arr, uncertainty=uncertainty)
+        d = max(0.0, float(self.max_delta))
+        lo = arr - d
+        hi = arr + d
+        return np.clip(base_pred, lo, hi)
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "trust_region_v1",
+            "max_delta": float(self.max_delta),
+            "base": self.base.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict) -> "TrustRegionCalibrator":
+        if payload.get("type") != "trust_region_v1":
+            raise ValueError(f"Unsupported calibrator type: {payload.get('type')}")
+        return cls(
+            base=calibrator_from_dict(payload["base"]),
+            max_delta=float(payload.get("max_delta", 0.0)),
+        )
+
+
+@dataclass(frozen=True)
+class EntropyAwareCalibrator:
+    """Selects calibrator branch by normalized PMF entropy threshold."""
+
+    entropy_threshold: float
+    low_entropy: "AnyCalibrator"
+    high_entropy: "AnyCalibrator"
+
+    def transform(self, x: np.ndarray, *, uncertainty: np.ndarray | None = None) -> np.ndarray:
+        arr = np.asarray(x, dtype=float)
+        if uncertainty is None:
+            return self.low_entropy.transform(arr)
+        unc = np.asarray(uncertainty, dtype=float)
+        if unc.size == 1 and arr.size > 1:
+            unc = np.full(arr.shape, float(unc.ravel()[0]), dtype=float)
+        if unc.shape != arr.shape:
+            raise ValueError("uncertainty shape must match input scores.")
+        out = np.empty_like(arr, dtype=float)
+        low_mask = unc <= float(self.entropy_threshold)
+        if np.any(low_mask):
+            out[low_mask] = self.low_entropy.transform(arr[low_mask], uncertainty=unc[low_mask])
+        if np.any(~low_mask):
+            out[~low_mask] = self.high_entropy.transform(arr[~low_mask], uncertainty=unc[~low_mask])
+        return np.clip(out, 1.0, 5.0)
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "entropy_aware_v1",
+            "entropy_threshold": float(self.entropy_threshold),
+            "low_entropy": self.low_entropy.to_dict(),
+            "high_entropy": self.high_entropy.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict) -> "EntropyAwareCalibrator":
+        if payload.get("type") != "entropy_aware_v1":
+            raise ValueError(f"Unsupported calibrator type: {payload.get('type')}")
+        return cls(
+            entropy_threshold=float(payload.get("entropy_threshold", 0.5)),
+            low_entropy=calibrator_from_dict(payload["low_entropy"]),
+            high_entropy=calibrator_from_dict(payload["high_entropy"]),
+        )
+
+
+AnyCalibrator: TypeAlias = (
+    IsotonicCalibrator
+    | PiecewiseIsotonicCalibrator
+    | Piecewise3IsotonicCalibrator
+    | TrustRegionCalibrator
+    | EntropyAwareCalibrator
+)
+
+
+def calibrator_from_dict(payload: dict) -> AnyCalibrator:
+    ctype = payload.get("type")
+    if ctype == "isotonic_v1":
+        return IsotonicCalibrator.from_dict(payload)
+    if ctype == "piecewise_isotonic_v1":
+        return PiecewiseIsotonicCalibrator.from_dict(payload)
+    if ctype == "piecewise3_isotonic_v1":
+        return Piecewise3IsotonicCalibrator.from_dict(payload)
+    if ctype == "trust_region_v1":
+        return TrustRegionCalibrator.from_dict(payload)
+    if ctype == "entropy_aware_v1":
+        return EntropyAwareCalibrator.from_dict(payload)
+    raise ValueError(f"Unsupported calibrator type: {ctype}")
+
+
+@dataclass(frozen=True)
 class DomainCalibrationPolicy:
     """Domain-aware calibration policy with per-domain isotonic calibrators."""
 
     default_domain: str
-    calibrators: dict[str, IsotonicCalibrator]
+    calibrators: dict[str, AnyCalibrator]
 
     def _resolve_candidates(self, domain_hint: str | None) -> list[str]:
         if not domain_hint:
@@ -106,7 +300,7 @@ class DomainCalibrationPolicy:
                 ordered.append(candidate)
         return ordered
 
-    def select(self, domain_hint: str | None = None) -> IsotonicCalibrator | None:
+    def select(self, domain_hint: str | None = None) -> AnyCalibrator | None:
         if not self.calibrators:
             return None
         for candidate in self._resolve_candidates(domain_hint):
@@ -127,7 +321,7 @@ class DomainCalibrationPolicy:
             raise ValueError(f"Unsupported policy type: {payload.get('type')}")
         domains_raw = payload.get("domains", {})
         calibrators = {
-            str(k).strip().lower(): IsotonicCalibrator.from_dict(v)
+            str(k).strip().lower(): calibrator_from_dict(v)
             for k, v in domains_raw.items()
             if isinstance(v, dict)
         }
@@ -197,3 +391,112 @@ def fit_isotonic_calibrator(scores: np.ndarray, labels: np.ndarray) -> IsotonicC
         pos += block_count
 
     return IsotonicCalibrator(x_sorted=x_fit, y_fitted=y_fit)
+
+
+def fit_piecewise_isotonic_calibrator(
+    scores: np.ndarray,
+    labels: np.ndarray,
+    *,
+    split_quantile: float = 0.6,
+) -> PiecewiseIsotonicCalibrator:
+    """Fit a two-segment isotonic mapping with continuity at split."""
+    x = np.asarray(scores, dtype=float)
+    y = np.asarray(labels, dtype=float)
+    if x.size == 0 or y.size == 0 or x.shape != y.shape:
+        raise ValueError("scores and labels must be non-empty arrays of equal shape.")
+    if x.size < 20:
+        iso = fit_isotonic_calibrator(x, y)
+        return PiecewiseIsotonicCalibrator(split_x=float(np.median(x)), lower=iso, upper=iso)
+
+    q = float(np.clip(split_quantile, 0.2, 0.8))
+    split_x = float(np.quantile(x, q))
+    lower_mask = x <= split_x
+    upper_mask = x > split_x
+    if lower_mask.sum() < 10 or upper_mask.sum() < 10:
+        iso = fit_isotonic_calibrator(x, y)
+        return PiecewiseIsotonicCalibrator(split_x=split_x, lower=iso, upper=iso)
+
+    lower = fit_isotonic_calibrator(x[lower_mask], y[lower_mask])
+    upper = fit_isotonic_calibrator(x[upper_mask], y[upper_mask])
+
+    lower_boundary = float(lower.transform(np.array([split_x], dtype=float))[0])
+    upper_boundary = float(upper.transform(np.array([split_x], dtype=float))[0])
+    continuity_shift = lower_boundary - upper_boundary
+    upper_shifted = IsotonicCalibrator(
+        x_sorted=upper.x_sorted.astype(float),
+        y_fitted=np.clip(upper.y_fitted.astype(float) + continuity_shift, upper.clip_min, upper.clip_max),
+        clip_min=upper.clip_min,
+        clip_max=upper.clip_max,
+    )
+    return PiecewiseIsotonicCalibrator(
+        split_x=split_x,
+        lower=lower,
+        upper=upper_shifted,
+    )
+
+
+def fit_piecewise3_isotonic_calibrator(
+    scores: np.ndarray,
+    labels: np.ndarray,
+    *,
+    split_quantiles: tuple[float, float] = (0.4, 0.75),
+) -> Piecewise3IsotonicCalibrator:
+    """Fit a three-segment isotonic mapping with continuity."""
+    x = np.asarray(scores, dtype=float)
+    y = np.asarray(labels, dtype=float)
+    if x.size == 0 or y.size == 0 or x.shape != y.shape:
+        raise ValueError("scores and labels must be non-empty arrays of equal shape.")
+    if x.size < 30:
+        iso = fit_isotonic_calibrator(x, y)
+        mid = float(np.median(x))
+        return Piecewise3IsotonicCalibrator(split_x1=mid, split_x2=mid, lower=iso, middle=iso, upper=iso)
+
+    q1 = float(np.clip(split_quantiles[0], 0.2, 0.6))
+    q2 = float(np.clip(split_quantiles[1], q1 + 0.05, 0.9))
+    split_x1 = float(np.quantile(x, q1))
+    split_x2 = float(np.quantile(x, q2))
+
+    lower_mask = x <= split_x1
+    middle_mask = (x > split_x1) & (x <= split_x2)
+    upper_mask = x > split_x2
+    if lower_mask.sum() < 10 or middle_mask.sum() < 10 or upper_mask.sum() < 10:
+        iso = fit_isotonic_calibrator(x, y)
+        return Piecewise3IsotonicCalibrator(
+            split_x1=split_x1,
+            split_x2=split_x2,
+            lower=iso,
+            middle=iso,
+            upper=iso,
+        )
+
+    lower = fit_isotonic_calibrator(x[lower_mask], y[lower_mask])
+    middle = fit_isotonic_calibrator(x[middle_mask], y[middle_mask])
+    upper = fit_isotonic_calibrator(x[upper_mask], y[upper_mask])
+
+    lower_b = float(lower.transform(np.array([split_x1], dtype=float))[0])
+    middle_b1 = float(middle.transform(np.array([split_x1], dtype=float))[0])
+    middle_shift = lower_b - middle_b1
+    middle_shifted = IsotonicCalibrator(
+        x_sorted=middle.x_sorted.astype(float),
+        y_fitted=np.clip(middle.y_fitted.astype(float) + middle_shift, middle.clip_min, middle.clip_max),
+        clip_min=middle.clip_min,
+        clip_max=middle.clip_max,
+    )
+
+    middle_b2 = float(middle_shifted.transform(np.array([split_x2], dtype=float))[0])
+    upper_b = float(upper.transform(np.array([split_x2], dtype=float))[0])
+    upper_shift = middle_b2 - upper_b
+    upper_shifted = IsotonicCalibrator(
+        x_sorted=upper.x_sorted.astype(float),
+        y_fitted=np.clip(upper.y_fitted.astype(float) + upper_shift, upper.clip_min, upper.clip_max),
+        clip_min=upper.clip_min,
+        clip_max=upper.clip_max,
+    )
+
+    return Piecewise3IsotonicCalibrator(
+        split_x1=split_x1,
+        split_x2=split_x2,
+        lower=lower,
+        middle=middle_shifted,
+        upper=upper_shifted,
+    )

@@ -211,7 +211,7 @@ def _score_texts(
     anchor_variant: str,
     temperature: float,
     epsilon: float,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     anchors = get_anchor_sets(language, variant=anchor_variant)
     anchor_mats: list[np.ndarray] = []
     for a in anchors:
@@ -223,7 +223,9 @@ def _score_texts(
     pmf_avg = np.mean(np.stack(pmf_sets, axis=0), axis=0)
     pmf_avg = pmf_avg / pmf_avg.sum(axis=1)[:, None]
     pmf_avg = _apply_temperature(pmf_avg, temperature=temperature)
-    return pmf_avg.dot(np.arange(1, 6, dtype=float))
+    scores = pmf_avg.dot(np.arange(1, 6, dtype=float))
+    entropy = -np.sum(pmf_avg * np.log(np.clip(pmf_avg, 1e-12, 1.0)), axis=1) / np.log(5.0)
+    return scores, entropy
 
 
 def _sample_rows(rows: list[tuple[str, int, int | None]], limit: int, seed: int) -> DatasetSlice:
@@ -523,7 +525,7 @@ def main() -> None:
 
     for ds in datasets:
         print(f"Scoring: {ds.name} | n={len(ds.labels)}")
-        raw_scores = _score_texts(
+        raw_scores, raw_unc = _score_texts(
             client,
             ds.texts,
             language=ds.language,
@@ -534,7 +536,7 @@ def main() -> None:
         if calibrator is None:
             cal_scores = raw_scores
         else:
-            cal_scores = calibrator.transform(raw_scores)
+            cal_scores = calibrator.transform(raw_scores, uncertainty=raw_unc)
         blend_scores: dict[str, np.ndarray] = {}
         for alpha_i in range(1, 10):
             alpha = alpha_i / 10.0
@@ -558,11 +560,11 @@ def main() -> None:
         if domain_policy is not None:
             chosen = domain_policy.select(domain_hint=domain_hint)
             if chosen is not None:
-                domain_policy_scores = chosen.transform(raw_scores)
+                domain_policy_scores = chosen.transform(raw_scores, uncertainty=raw_unc)
             purchase_cal = domain_policy.select(domain_hint=purchase_hint)
             if has_purchase_domain_calibrator and purchase_cal is not None:
                 if is_purchase_intent:
-                    purchase_domain_only = purchase_cal.transform(raw_scores)
+                    purchase_domain_only = purchase_cal.transform(raw_scores, uncertainty=raw_unc)
                     for alpha in purchase_hybrid_alphas:
                         purchase_hybrid_scores[f"purchase_hybrid_{alpha:.1f}"] = np.clip(
                             cal_scores + alpha * (purchase_domain_only - cal_scores), 1.0, 5.0

@@ -30,3 +30,8 @@ def test_all_anchor_variants_are_bilingual_and_complete():
 def test_v4_anchor_variant_exists_for_polish_and_english():
     assert len(get_anchor_sets(Language.PL, variant="paper_general_v4")) == 6
     assert len(get_anchor_sets(Language.EN, variant="paper_general_v4")) == 6
+
+
+def test_v41_anchor_variant_exists_for_polish_and_english():
+    assert len(get_anchor_sets(Language.PL, variant="paper_general_v4.1")) == 6
+    assert len(get_anchor_sets(Language.EN, variant="paper_general_v4.1")) == 6
