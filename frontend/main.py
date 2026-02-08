@@ -1977,6 +1977,7 @@ async def run_focus_group_async(
     region: Optional[str],
     enable_web_search: bool = True,
     project_id: str | None = None,
+    progress=gr.Progress(),
 ) -> tuple[str, str, str, object]:
     """Run virtual focus group discussion."""
     lang = get_lang(lang_code)
@@ -1984,6 +1985,8 @@ async def run_focus_group_async(
     if not product or not product.strip():
         error_msg = "❌ Enter product description" if lang == Language.EN else "❌ Wprowadź opis produktu"
         return "", "", error_msg, gr.update()
+
+    progress(0, desc="Starting focus group..." if lang == Language.EN else "Uruchamianie grupy fokusowej...")
     
     try:
         # Process product input - extract from URL if needed
