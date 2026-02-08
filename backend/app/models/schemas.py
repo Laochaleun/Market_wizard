@@ -23,6 +23,10 @@ class DemographicProfile(BaseModel):
         None, description="Location type: 'urban', 'suburban', 'rural', or None"
     )
     region: Optional[str] = Field(None, description="Region/voivodeship name")
+    education: Optional[str] = Field(
+        None, 
+        description="Education level: 'podstawowe', 'zawodowe', 'średnie', 'policealne', 'wyższe', or None"
+    )
 
 
 class Persona(BaseModel):
@@ -37,6 +41,8 @@ class Persona(BaseModel):
     location_type: str
     education: Optional[str] = None
     occupation: Optional[str] = None
+    marital_status: Optional[str] = None  # kawaler/panna, małżeństwo, rozwiedziony, wdowiec/wdowa
+    has_children: Optional[bool] = None
 
     def to_prompt_description(self) -> str:
         """Generate a natural language description for LLM prompts."""

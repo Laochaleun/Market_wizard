@@ -62,6 +62,9 @@ class GeminiClient:
             income=persona.income,
             occupation=persona.occupation,
             product_description=product_description,
+            education=persona.education,
+            marital_status=persona.marital_status,
+            has_children=persona.has_children,
         )
 
         # Use synchronous call wrapped for async (genai doesn't have native async yet)
@@ -1556,6 +1559,9 @@ class OpenAIClient:
             income=persona.income,
             occupation=persona.occupation,
             product_description=product_description,
+            education=persona.education,
+            marital_status=persona.marital_status,
+            has_children=persona.has_children,
         )
 
         temp = self.temperature if temperature is None else temperature

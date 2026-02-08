@@ -509,6 +509,25 @@ INCOME_CHOICES = {
     ],
 }
 
+EDUCATION_CHOICES = {
+    Language.PL: [
+        "Wszystkie",
+        "Podstawowe",
+        "Zasadnicze zawodowe",
+        "Średnie",
+        "Policealne",
+        "Wyższe",
+    ],
+    Language.EN: [
+        "All",
+        "Primary",
+        "Vocational",
+        "Secondary",
+        "Post-secondary",
+        "Higher",
+    ],
+}
+
 LOCATION_CHOICES = {
     Language.PL: [
         "Wszystkie",
@@ -576,6 +595,7 @@ def mark_dirty(
     age_max: int,
     gender: str,
     income_level: str,
+    education_level: str,
     location_type: str,
     region: str,
     n_agents: int,
@@ -606,6 +626,7 @@ def mark_dirty(
         "age_max": 45,
         "gender": "Wszystkie",
         "income_level": "Wszystkie",
+        "education_level": "Wszystkie",
         "location_type": "Wszystkie",
         "region": None,
         "n_agents": 20,
@@ -632,6 +653,7 @@ def mark_dirty(
         "age_max": int(age_max),
         "gender": gender,
         "income_level": income_level,
+        "education_level": education_level,
         "location_type": location_type,
         "region": normalize_region_value(region),
         "n_agents": int(n_agents),
@@ -747,6 +769,7 @@ def update_demographic_dropdowns(
     lang_code: str,
     current_gender: str,
     current_income: str,
+    current_education: str,
     current_location: str,
     current_region: str,
 ):
@@ -766,6 +789,9 @@ def update_demographic_dropdowns(
     income_level = normalize_income_value(current_income)
     income_value = income_label_from_level(income_level, lang)
 
+    education_level = normalize_education_value(current_education)
+    education_value = education_label_from_level(education_level, lang)
+
     location_type = normalize_location_value(current_location)
     location_value = location_label_from_type(location_type, lang)
 
@@ -776,6 +802,7 @@ def update_demographic_dropdowns(
     return (
         gr.update(choices=gender_choices, value=gender_value),
         gr.update(choices=INCOME_CHOICES[lang], value=income_value),
+        gr.update(choices=EDUCATION_CHOICES[lang], value=education_value),
         gr.update(choices=LOCATION_CHOICES[lang], value=location_value),
         gr.update(choices=REGION_CHOICES[lang], value=region_ui_value),
     )
@@ -833,6 +860,27 @@ def normalize_location_value(location_type: Optional[str]) -> Optional[str]:
     return loc_map.get(location_type)
 
 
+def normalize_education_value(education_level: Optional[str]) -> Optional[str]:
+    """Normalize education dropdown value to internal lowercase format."""
+    all_values = {"All", "Wszystkie"}
+    if education_level in all_values or not education_level:
+        return None
+    # Map UI values to internal lowercase format
+    edu_map = {
+        "Podstawowe": "podstawowe",
+        "Zasadnicze zawodowe": "zasadnicze zawodowe",
+        "Średnie": "średnie",
+        "Policealne": "policealne",
+        "Wyższe": "wyższe",
+        "Primary": "primary",
+        "Vocational": "vocational",
+        "Secondary": "secondary",
+        "Post-secondary": "post-secondary",
+        "Higher": "higher",
+    }
+    return edu_map.get(education_level, education_level.lower())
+
+
 def income_label_from_level(income_level: Optional[str], lang: Language) -> str:
     mapping = {
         Language.PL: {
@@ -875,6 +923,39 @@ def location_label_from_type(location_type: Optional[str], lang: Language) -> st
         },
     }
     return mapping[lang].get(location_type, LOCATION_CHOICES[lang][0])
+
+
+def education_label_from_level(education_level: Optional[str], lang: Language) -> str:
+    # Maps internal keys (both PL and EN) to display labels
+    mapping = {
+        Language.PL: {
+            "primary": "Podstawowe",
+            "podstawowe": "Podstawowe",
+            "vocational": "Zasadnicze zawodowe",
+            "zasadnicze zawodowe": "Zasadnicze zawodowe",
+            "secondary": "Średnie",
+            "średnie": "Średnie",
+            "post-secondary": "Policealne",
+            "policealne": "Policealne",
+            "higher": "Wyższe",
+            "wyższe": "Wyższe",
+        },
+        Language.EN: {
+            "primary": "Primary",
+            "podstawowe": "Primary",
+            "vocational": "Vocational",
+            "zasadnicze zawodowe": "Vocational",
+            "secondary": "Secondary",
+            "średnie": "Secondary",
+            "post-secondary": "Post-secondary",
+            "policealne": "Post-secondary",
+            "higher": "Higher",
+            "wyższe": "Higher",
+        },
+    }
+    # Handle normalized values (lowercase)
+    norm_level = education_level.lower() if education_level else None
+    return mapping[lang].get(norm_level, EDUCATION_CHOICES[lang][0])
 
 
 def autosave_simulation_project(
@@ -1213,6 +1294,7 @@ async def run_simulation_async(
     age_max: int,
     gender: Optional[str],
     income_level: Optional[str],
+    education_level: Optional[str],
     location_type: Optional[str],
     region: Optional[str],
     enable_web_search: bool = True,
@@ -1289,6 +1371,7 @@ async def run_simulation_async(
         income = normalize_income_value(income_level)
         location = normalize_location_value(location_type)
         region_value = normalize_region_value(region)
+        education = normalize_education_value(education_level)
         
         # Build demographic profile
         profile = DemographicProfile(
@@ -1298,6 +1381,7 @@ async def run_simulation_async(
             income_level=income,
             location_type=location,
             region=region_value,
+            education=education,
         )
 
         search_msg = " + Google Search" if enable_web_search else ""
@@ -2771,16 +2855,21 @@ def create_interface():
                                 value="Wszystkie",
                                 label="Income / Dochód (netto)",
                             )
+                            education = gr.Dropdown(
+                                choices=EDUCATION_CHOICES[Language.PL],
+                                value="Wszystkie",
+                                label="Education / Wykształcenie",
+                            )
+                        with gr.Row():
                             location = gr.Dropdown(
                                 choices=LOCATION_CHOICES[Language.PL],
                                 value="Wszystkie",
-                                label="Lokalizacja / Location (GUS 2024)",
+                                label="Location / Lokalizacja (GUS 2024)",
                             )
-                        with gr.Row():
                             region = gr.Dropdown(
                                 choices=REGION_CHOICES[Language.PL],
                                 value="Wszystkie regiony",
-                                label="Region / Voivodeship (GUS 2024)",
+                                label="Region / Województwo (GUS 2024)",
                             )
 
                         n_agents = gr.Slider(5, 100, value=20, step=5, label="Number of agents / Liczba agentów")
@@ -3512,6 +3601,7 @@ def create_interface():
             age_max,
             gender,
             income,
+            education,
             location,
             region,
             n_agents,
@@ -3558,8 +3648,8 @@ def create_interface():
         )
         language_select.change(
             fn=update_demographic_dropdowns,
-            inputs=[language_select, gender, income, location, region],
-            outputs=[gender, income, location, region],
+            inputs=[language_select, gender, income, education, location, region],
+            outputs=[gender, income, education, location, region],
         )
 
         gr.Markdown(
@@ -3582,6 +3672,7 @@ def create_interface():
                 age_max,
                 gender,
                 income,
+                education,
                 location,
                 region,
                 enable_web_search,

@@ -1013,70 +1013,122 @@ LOCATIONS: Dict[Language, Dict[str, List[str]]] = {
 
 OCCUPATIONS: Dict[Language, List[Dict[str, any]]] = {
     Language.PL: [
-        # Zawody wymagające studiów wyższych (min. 5-6 lat)
-        {"name": "lekarz", "min_age": 26, "max_age": 70, "income_min": 6000, "income_max": 20000},
-        {"name": "dentysta", "min_age": 26, "max_age": 70, "income_min": 7000, "income_max": 25000},
-        {"name": "prawnik", "min_age": 24, "max_age": 70, "income_min": 5000, "income_max": 18000},
-        {"name": "architekt", "min_age": 26, "max_age": 70, "income_min": 5500, "income_max": 15000},
-        {"name": "farmaceuta", "min_age": 25, "max_age": 70, "income_min": 5500, "income_max": 12000},
-        {"name": "programista", "min_age": 22, "max_age": 65, "income_min": 6000, "income_max": 25000},
-        {"name": "inżynier", "min_age": 23, "max_age": 70, "income_min": 5000, "income_max": 15000},
-        {"name": "księgowy", "min_age": 23, "max_age": 70, "income_min": 4000, "income_max": 12000},
-        {"name": "menedżer", "min_age": 28, "max_age": 65, "income_min": 7000, "income_max": 25000},
-        {"name": "nauczyciel", "min_age": 23, "max_age": 67, "income_min": 4000, "income_max": 8000},
-        {"name": "grafik", "min_age": 21, "max_age": 65, "income_min": 3500, "income_max": 12000},
-        {"name": "pielęgniarka", "min_age": 22, "max_age": 67, "income_min": 4500, "income_max": 8000},
+        # ISCO 1: Kierownicy (~6% populacji)
+        {"name": "menedżer", "min_age": 28, "max_age": 65, "income_min": 7000, "income_max": 25000, "isco": 1},
+        {"name": "dyrektor", "min_age": 35, "max_age": 67, "income_min": 12000, "income_max": 40000, "isco": 1},
+        {"name": "przedsiębiorca", "min_age": 25, "max_age": 70, "income_min": 5000, "income_max": 50000, "isco": 1},
         
-        # Zawody bez wymagań wyższego wykształcenia
-        {"name": "sprzedawca", "min_age": 18, "max_age": 65, "income_min": 2800, "income_max": 5000},
-        {"name": "kierowca", "min_age": 21, "max_age": 67, "income_min": 3500, "income_max": 7000},
-        {"name": "fryzjer", "min_age": 18, "max_age": 65, "income_min": 2500, "income_max": 6000},
-        {"name": "kelner", "min_age": 18, "max_age": 55, "income_min": 2500, "income_max": 4500},
-        {"name": "mechanik", "min_age": 18, "max_age": 65, "income_min": 3000, "income_max": 7000},
-        {"name": "elektryk", "min_age": 18, "max_age": 65, "income_min": 3500, "income_max": 8000},
-        {"name": "policjant", "min_age": 21, "max_age": 60, "income_min": 4500, "income_max": 9000},
-        {"name": "strażak", "min_age": 21, "max_age": 55, "income_min": 4500, "income_max": 8000},
-        {"name": "pracownik biurowy", "min_age": 19, "max_age": 67, "income_min": 3500, "income_max": 7000},
-        {"name": "pracownik budowlany", "min_age": 18, "max_age": 60, "income_min": 3500, "income_max": 8000},
-        {"name": "kucharz", "min_age": 18, "max_age": 65, "income_min": 3000, "income_max": 7000},
+        # ISCO 2: Specjaliści (~22% populacji)
+        {"name": "lekarz", "min_age": 26, "max_age": 70, "income_min": 6000, "income_max": 20000, "isco": 2},
+        {"name": "dentysta", "min_age": 26, "max_age": 70, "income_min": 7000, "income_max": 25000, "isco": 2},
+        {"name": "prawnik", "min_age": 24, "max_age": 70, "income_min": 5000, "income_max": 18000, "isco": 2},
+        {"name": "architekt", "min_age": 26, "max_age": 70, "income_min": 5500, "income_max": 15000, "isco": 2},
+        {"name": "farmaceuta", "min_age": 25, "max_age": 70, "income_min": 5500, "income_max": 12000, "isco": 2},
+        {"name": "programista", "min_age": 22, "max_age": 65, "income_min": 6000, "income_max": 25000, "isco": 2},
+        {"name": "inżynier", "min_age": 23, "max_age": 70, "income_min": 5000, "income_max": 15000, "isco": 2},
+        {"name": "nauczyciel", "min_age": 23, "max_age": 67, "income_min": 4000, "income_max": 8000, "isco": 2},
         
-        # Statusy specjalne (wiek/sytuacja życiowa)
-        {"name": "student", "min_age": 18, "max_age": 27, "income_min": 0, "income_max": 2500},
-        {"name": "emeryt", "min_age": 60, "max_age": 100, "income_min": 2000, "income_max": 4500},
-        {"name": "rencista", "min_age": 35, "max_age": 100, "income_min": 1800, "income_max": 3500},
+        # ISCO 3: Technicy i średni personel (~14% populacji)
+        {"name": "księgowy", "min_age": 23, "max_age": 70, "income_min": 4000, "income_max": 12000, "isco": 3},
+        {"name": "grafik", "min_age": 21, "max_age": 65, "income_min": 3500, "income_max": 12000, "isco": 3},
+        {"name": "pielęgniarka", "min_age": 22, "max_age": 67, "income_min": 4500, "income_max": 8000, "isco": 3},
+        {"name": "technik", "min_age": 20, "max_age": 65, "income_min": 3500, "income_max": 7000, "isco": 3},
+        
+        # ISCO 4: Pracownicy biurowi (~8% populacji)
+        {"name": "pracownik biurowy", "min_age": 19, "max_age": 67, "income_min": 3500, "income_max": 7000, "isco": 4},
+        {"name": "sekretarka", "min_age": 19, "max_age": 60, "income_min": 3000, "income_max": 5500, "isco": 4},
+        
+        # ISCO 5: Usługi i sprzedaż (~16% populacji)
+        {"name": "sprzedawca", "min_age": 18, "max_age": 65, "income_min": 2800, "income_max": 5000, "isco": 5},
+        {"name": "fryzjer", "min_age": 18, "max_age": 65, "income_min": 2500, "income_max": 6000, "isco": 5},
+        {"name": "kelner", "min_age": 18, "max_age": 55, "income_min": 2500, "income_max": 4500, "isco": 5},
+        {"name": "kucharz", "min_age": 18, "max_age": 65, "income_min": 3000, "income_max": 7000, "isco": 5},
+        {"name": "policjant", "min_age": 21, "max_age": 60, "income_min": 4500, "income_max": 9000, "isco": 5},
+        {"name": "strażak", "min_age": 21, "max_age": 55, "income_min": 4500, "income_max": 8000, "isco": 5},
+        {"name": "ochroniarz", "min_age": 21, "max_age": 60, "income_min": 3000, "income_max": 5500, "isco": 5},
+        
+        # ISCO 6: Rolnicy (~8% populacji)
+        {"name": "rolnik", "min_age": 18, "max_age": 75, "income_min": 2500, "income_max": 8000, "isco": 6},
+        
+        # ISCO 7: Robotnicy i rzemieślnicy (~12% populacji)
+        {"name": "mechanik", "min_age": 18, "max_age": 65, "income_min": 3000, "income_max": 7000, "isco": 7},
+        {"name": "elektryk", "min_age": 18, "max_age": 65, "income_min": 3500, "income_max": 8000, "isco": 7},
+        {"name": "pracownik budowlany", "min_age": 18, "max_age": 60, "income_min": 3500, "income_max": 8000, "isco": 7},
+        {"name": "stolarz", "min_age": 18, "max_age": 65, "income_min": 3000, "income_max": 6500, "isco": 7},
+        {"name": "spawacz", "min_age": 18, "max_age": 60, "income_min": 4000, "income_max": 9000, "isco": 7},
+        
+        # ISCO 8: Operatorzy maszyn (~8% populacji)
+        {"name": "kierowca", "min_age": 21, "max_age": 67, "income_min": 3500, "income_max": 7000, "isco": 8},
+        {"name": "operator produkcji", "min_age": 18, "max_age": 60, "income_min": 3200, "income_max": 5500, "isco": 8},
+        
+        # ISCO 9: Prace proste (~6% populacji)
+        {"name": "magazynier", "min_age": 18, "max_age": 60, "income_min": 3000, "income_max": 5000, "isco": 9},
+        {"name": "sprzątaczka", "min_age": 18, "max_age": 65, "income_min": 2800, "income_max": 4000, "isco": 9},
+        
+        # Statusy specjalne (poza ISCO)
+        {"name": "student", "min_age": 18, "max_age": 27, "income_min": 0, "income_max": 2500, "isco": 0},
+        {"name": "emeryt", "min_age": 60, "max_age": 100, "income_min": 2000, "income_max": 4500, "isco": 0},
+        {"name": "rencista", "min_age": 35, "max_age": 100, "income_min": 1800, "income_max": 3500, "isco": 0},
+        {"name": "bezrobotny", "min_age": 18, "max_age": 65, "income_min": 0, "income_max": 1500, "isco": 0},
     ],
     Language.EN: [
-        # Professions requiring higher education
-        {"name": "doctor", "min_age": 26, "max_age": 70, "income_min": 8000, "income_max": 25000},
-        {"name": "dentist", "min_age": 26, "max_age": 70, "income_min": 9000, "income_max": 30000},
-        {"name": "lawyer", "min_age": 24, "max_age": 70, "income_min": 6000, "income_max": 20000},
-        {"name": "architect", "min_age": 26, "max_age": 70, "income_min": 5500, "income_max": 15000},
-        {"name": "pharmacist", "min_age": 25, "max_age": 70, "income_min": 6000, "income_max": 12000},
-        {"name": "software developer", "min_age": 22, "max_age": 65, "income_min": 7000, "income_max": 25000},
-        {"name": "engineer", "min_age": 23, "max_age": 70, "income_min": 5500, "income_max": 15000},
-        {"name": "accountant", "min_age": 23, "max_age": 70, "income_min": 4500, "income_max": 12000},
-        {"name": "manager", "min_age": 28, "max_age": 65, "income_min": 8000, "income_max": 25000},
-        {"name": "teacher", "min_age": 23, "max_age": 67, "income_min": 4000, "income_max": 8000},
-        {"name": "graphic designer", "min_age": 21, "max_age": 65, "income_min": 4000, "income_max": 12000},
-        {"name": "nurse", "min_age": 22, "max_age": 67, "income_min": 5000, "income_max": 9000},
+        # ISCO 1: Managers (~6% of workforce)
+        {"name": "manager", "min_age": 28, "max_age": 65, "income_min": 8000, "income_max": 25000, "isco": 1},
+        {"name": "director", "min_age": 35, "max_age": 67, "income_min": 12000, "income_max": 40000, "isco": 1},
+        {"name": "entrepreneur", "min_age": 25, "max_age": 70, "income_min": 5000, "income_max": 50000, "isco": 1},
         
-        # Professions without higher education requirement
-        {"name": "sales associate", "min_age": 18, "max_age": 65, "income_min": 2500, "income_max": 5000},
-        {"name": "driver", "min_age": 21, "max_age": 67, "income_min": 3500, "income_max": 7000},
-        {"name": "hairdresser", "min_age": 18, "max_age": 65, "income_min": 2500, "income_max": 6000},
-        {"name": "waiter", "min_age": 18, "max_age": 55, "income_min": 2500, "income_max": 5000},
-        {"name": "mechanic", "min_age": 18, "max_age": 65, "income_min": 3500, "income_max": 8000},
-        {"name": "electrician", "min_age": 18, "max_age": 65, "income_min": 4000, "income_max": 9000},
-        {"name": "police officer", "min_age": 21, "max_age": 60, "income_min": 5000, "income_max": 10000},
-        {"name": "firefighter", "min_age": 21, "max_age": 55, "income_min": 5000, "income_max": 9000},
-        {"name": "office worker", "min_age": 19, "max_age": 67, "income_min": 3500, "income_max": 7000},
-        {"name": "construction worker", "min_age": 18, "max_age": 60, "income_min": 3500, "income_max": 8000},
-        {"name": "chef", "min_age": 18, "max_age": 65, "income_min": 3500, "income_max": 8000},
+        # ISCO 2: Professionals (~22% of workforce)
+        {"name": "doctor", "min_age": 26, "max_age": 70, "income_min": 8000, "income_max": 25000, "isco": 2},
+        {"name": "dentist", "min_age": 26, "max_age": 70, "income_min": 9000, "income_max": 30000, "isco": 2},
+        {"name": "lawyer", "min_age": 24, "max_age": 70, "income_min": 6000, "income_max": 20000, "isco": 2},
+        {"name": "architect", "min_age": 26, "max_age": 70, "income_min": 5500, "income_max": 15000, "isco": 2},
+        {"name": "pharmacist", "min_age": 25, "max_age": 70, "income_min": 6000, "income_max": 12000, "isco": 2},
+        {"name": "software developer", "min_age": 22, "max_age": 65, "income_min": 7000, "income_max": 25000, "isco": 2},
+        {"name": "engineer", "min_age": 23, "max_age": 70, "income_min": 5500, "income_max": 15000, "isco": 2},
+        {"name": "teacher", "min_age": 23, "max_age": 67, "income_min": 4000, "income_max": 8000, "isco": 2},
         
-        # Special statuses (age/life situation)
-        {"name": "student", "min_age": 18, "max_age": 27, "income_min": 0, "income_max": 2500},
-        {"name": "retiree", "min_age": 60, "max_age": 100, "income_min": 2000, "income_max": 5000},
-        {"name": "disability pensioner", "min_age": 35, "max_age": 100, "income_min": 1800, "income_max": 4000},
+        # ISCO 3: Technicians (~14% of workforce)
+        {"name": "accountant", "min_age": 23, "max_age": 70, "income_min": 4500, "income_max": 12000, "isco": 3},
+        {"name": "graphic designer", "min_age": 21, "max_age": 65, "income_min": 4000, "income_max": 12000, "isco": 3},
+        {"name": "nurse", "min_age": 22, "max_age": 67, "income_min": 5000, "income_max": 9000, "isco": 3},
+        {"name": "technician", "min_age": 20, "max_age": 65, "income_min": 3500, "income_max": 7000, "isco": 3},
+        
+        # ISCO 4: Clerical workers (~8% of workforce)
+        {"name": "office worker", "min_age": 19, "max_age": 67, "income_min": 3500, "income_max": 7000, "isco": 4},
+        {"name": "secretary", "min_age": 19, "max_age": 60, "income_min": 3000, "income_max": 5500, "isco": 4},
+        
+        # ISCO 5: Service and sales (~16% of workforce)
+        {"name": "sales associate", "min_age": 18, "max_age": 65, "income_min": 2500, "income_max": 5000, "isco": 5},
+        {"name": "hairdresser", "min_age": 18, "max_age": 65, "income_min": 2500, "income_max": 6000, "isco": 5},
+        {"name": "waiter", "min_age": 18, "max_age": 55, "income_min": 2500, "income_max": 5000, "isco": 5},
+        {"name": "chef", "min_age": 18, "max_age": 65, "income_min": 3500, "income_max": 8000, "isco": 5},
+        {"name": "police officer", "min_age": 21, "max_age": 60, "income_min": 5000, "income_max": 10000, "isco": 5},
+        {"name": "firefighter", "min_age": 21, "max_age": 55, "income_min": 5000, "income_max": 9000, "isco": 5},
+        {"name": "security guard", "min_age": 21, "max_age": 60, "income_min": 3000, "income_max": 5500, "isco": 5},
+        
+        # ISCO 6: Agricultural workers (~8% of workforce)
+        {"name": "farmer", "min_age": 18, "max_age": 75, "income_min": 2500, "income_max": 8000, "isco": 6},
+        
+        # ISCO 7: Craft workers (~12% of workforce)
+        {"name": "mechanic", "min_age": 18, "max_age": 65, "income_min": 3500, "income_max": 8000, "isco": 7},
+        {"name": "electrician", "min_age": 18, "max_age": 65, "income_min": 4000, "income_max": 9000, "isco": 7},
+        {"name": "construction worker", "min_age": 18, "max_age": 60, "income_min": 3500, "income_max": 8000, "isco": 7},
+        {"name": "carpenter", "min_age": 18, "max_age": 65, "income_min": 3000, "income_max": 6500, "isco": 7},
+        {"name": "welder", "min_age": 18, "max_age": 60, "income_min": 4000, "income_max": 9000, "isco": 7},
+        
+        # ISCO 8: Machine operators (~8% of workforce)
+        {"name": "driver", "min_age": 21, "max_age": 67, "income_min": 3500, "income_max": 7000, "isco": 8},
+        {"name": "production operator", "min_age": 18, "max_age": 60, "income_min": 3200, "income_max": 5500, "isco": 8},
+        
+        # ISCO 9: Elementary occupations (~6% of workforce)
+        {"name": "warehouse worker", "min_age": 18, "max_age": 60, "income_min": 3000, "income_max": 5000, "isco": 9},
+        {"name": "cleaner", "min_age": 18, "max_age": 65, "income_min": 2800, "income_max": 4000, "isco": 9},
+        
+        # Special statuses (outside ISCO)
+        {"name": "student", "min_age": 18, "max_age": 27, "income_min": 0, "income_max": 2500, "isco": 0},
+        {"name": "retiree", "min_age": 60, "max_age": 100, "income_min": 2000, "income_max": 5000, "isco": 0},
+        {"name": "disability pensioner", "min_age": 35, "max_age": 100, "income_min": 1800, "income_max": 4000, "isco": 0},
+        {"name": "unemployed", "min_age": 18, "max_age": 65, "income_min": 0, "income_max": 1500, "isco": 0},
     ],
 }
 
@@ -1095,6 +1147,9 @@ def get_persona_prompt(
     income: int,
     occupation: str | None,
     product_description: str,
+    education: str | None = None,
+    marital_status: str | None = None,
+    has_children: bool | None = None,
 ) -> str:
     """
     Build SSR-compliant prompt for synthetic consumer.
@@ -1107,9 +1162,18 @@ def get_persona_prompt(
     if language == Language.PL:
         gender_word = "kobieta" if gender == "F" else "mężczyzna"
         occupation_line = f"\nPracujesz jako {occupation}." if occupation else ""
+        education_line = f" Masz wykształcenie {education}." if education else ""
+        
+        # Family status
+        family_parts = []
+        if marital_status:
+            family_parts.append(marital_status)
+        if has_children is not None:
+            family_parts.append("masz dzieci" if has_children else "nie masz dzieci")
+        family_line = f"\n{', '.join(family_parts).capitalize()}." if family_parts else ""
         
         return f"""Jesteś {name}, {age}-letni {gender_word} mieszkający w {location}.
-Twój miesięczny dochód to około {income} PLN.{occupation_line}
+Twój miesięczny dochód to około {income} PLN.{occupation_line}{education_line}{family_line}
 
 Rozważ następujący produkt:
 {product_description}
@@ -1119,9 +1183,25 @@ Jak bardzo jesteś skłonny/a kupić ten produkt? Odpowiedz naturalnie, tak jak 
     else:  # EN
         gender_word = "woman" if gender == "F" else "man"
         occupation_line = f"\nYou work as a {occupation}." if occupation else ""
+        education_line = f" You have {education} education." if education else ""
+        
+        # Family status
+        family_parts = []
+        if marital_status:
+            # Translate marital status
+            status_map = {
+                "kawaler/panna": "single",
+                "małżeństwo": "married",
+                "rozwiedziony": "divorced",
+                "wdowiec/wdowa": "widowed",
+            }
+            family_parts.append(f"You are {status_map.get(marital_status, marital_status)}")
+        if has_children is not None:
+            family_parts.append("have children" if has_children else "have no children")
+        family_line = f"\n{' and '.join(family_parts)}." if family_parts else ""
         
         return f"""You are {name}, a {age}-year-old {gender_word} living in {location}.
-Your monthly income is about ${income}.{occupation_line}
+Your monthly income is about ${income}.{occupation_line}{education_line}{family_line}
 
 Consider the following product:
 {product_description}

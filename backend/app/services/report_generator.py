@@ -248,6 +248,15 @@ def _generate_html_pl(
         p = r.persona
         score_color = _get_score_color(r.likert_score)
         gender_label = _localized_gender_label(p.gender, Language.PL)
+        
+        # Build optional demographic fields
+        education_html = f'<span style="color: #000000; font-weight: 500;">🎓 {p.education}</span>' if p.education else ''
+        marital_html = f'<span style="color: #000000; font-weight: 500;">💍 {p.marital_status}</span>' if p.marital_status else ''
+        children_html = ''
+        if p.has_children is not None:
+            children_label = 'ma dzieci' if p.has_children else 'bez dzieci'
+            children_html = f'<span style="color: #000000; font-weight: 500;">👶 {children_label}</span>'
+        
         responses_html += f"""
         <div style="background: #ffffff; border-radius: 0.75rem; padding: 1rem; margin-bottom: 1rem; border-left: 4px solid #1e3a5f; border: 1px solid #e5e7eb;">
             <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
@@ -261,6 +270,9 @@ def _generate_html_pl(
                 <span style="color: #000000; font-weight: 500;">📍 {p.location}</span>
                 <span style="color: #000000; font-weight: 500;">💰 {p.income:,} PLN</span>
                 {f'<span style="color: #000000; font-weight: 500;">💼 {p.occupation}</span>' if p.occupation else ''}
+                {education_html}
+                {marital_html}
+                {children_html}
             </div>
             <div style="background: #f8fafc; padding: 1rem; border-radius: 0.5rem; border-left: 3px solid #1e3a5f; color: #000000; margin: 0;">{_format_response_html(r.text_response)}</div>
         </div>
@@ -702,6 +714,25 @@ def _generate_html_en(
         p = r.persona
         score_color = _get_score_color(r.likert_score)
         gender_label = _localized_gender_label(p.gender, Language.EN)
+        
+        # Build optional demographic fields with English labels
+        education_html = f'<span style="color: #000000; font-weight: 500;">🎓 {p.education}</span>' if p.education else ''
+        
+        # Translate marital status
+        marital_map = {
+            "kawaler/panna": "single",
+            "małżeństwo": "married", 
+            "rozwiedziony": "divorced",
+            "wdowiec/wdowa": "widowed",
+        }
+        marital_label = marital_map.get(p.marital_status, p.marital_status) if p.marital_status else None
+        marital_html = f'<span style="color: #000000; font-weight: 500;">💍 {marital_label}</span>' if marital_label else ''
+        
+        children_html = ''
+        if p.has_children is not None:
+            children_label = 'has children' if p.has_children else 'no children'
+            children_html = f'<span style="color: #000000; font-weight: 500;">👶 {children_label}</span>'
+        
         responses_html += f"""
         <div style="background: #ffffff; border-radius: 0.75rem; padding: 1rem; margin-bottom: 1rem; border-left: 4px solid #1e3a5f; border: 1px solid #e5e7eb;">
             <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
@@ -715,6 +746,9 @@ def _generate_html_en(
                 <span style="color: #000000; font-weight: 500;">📍 {p.location}</span>
                 <span style="color: #000000; font-weight: 500;">💰 ${p.income:,}</span>
                 {f'<span style="color: #000000; font-weight: 500;">💼 {p.occupation}</span>' if p.occupation else ''}
+                {education_html}
+                {marital_html}
+                {children_html}
             </div>
             <div style="background: #f8fafc; padding: 1rem; border-radius: 0.5rem; border-left: 3px solid #1e3a5f; color: #000000; margin: 0;">{_format_response_html(r.text_response)}</div>
         </div>
