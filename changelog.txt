@@ -1,3 +1,12 @@
+v0.5.7 (2026-02-09) - Price Sensitivity Analysis Optimization
+- Optimized price sensitivity analysis performance:
+  - Parallelized simulation runs for different price points using asyncio.gather
+  - Removed redundant LLM call for SSR scoring when web search is enabled
+  - Lowered default agents per price point from 50 to 20
+  - Expected speedup: ~12x (5x from parallelization + 2.5x from fewer calls)
+- Added test coverage for price sensitivity engine (backend/tests/test_price_sensitivity.py)
+- Confirmed web search sources are shared across all agents (only called once per simulation)
+
 v0.5.6 (2026-02-08) - Stage 2 calibration/anchors iteration (in progress, not production-ready)
 - Continued Stage 2 SSR tuning with focus on closing production gates while preserving paper-style purchase-intent behavior.
 - Introduced anchor-variant framework with bilingual (PL+EN) variants:

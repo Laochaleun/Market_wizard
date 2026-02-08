@@ -3009,7 +3009,7 @@ def create_interface():
                     price_max = gr.Number(value=59.99, label="Price max / Cena max")
                     price_points = gr.Slider(3, 7, value=5, step=1, label="Price points / Punkty cenowe")
 
-                price_n_agents = gr.Slider(10, 100, value=50, step=5, label="Agents per price / Agentów na cenę")
+                price_n_agents = gr.Slider(10, 100, value=20, step=5, label="Agents per price / Agentów na cenę")
                 with gr.Accordion("🔍 Web Search (RAG)", open=False):
                     price_enable_web_search = gr.Checkbox(
                         label="Enable Google Search / Włącz wyszukiwanie",

@@ -147,12 +147,8 @@ class SimulationEngine:
                     temperature=self.llm_temperature,
                 )
                 sources = []
-            ssr_text = await self.llm_client.generate_opinion(
-                persona,
-                product_description,
-                language=self.language,
-                temperature=self.llm_temperature,
-            )
+            # Reuse opinion for SSR scoring instead of making a second LLM call
+            ssr_text = None
         else:
             opinion = await self.llm_client.generate_opinion(
                 persona,
@@ -446,11 +442,12 @@ class PriceSensitivityEngine:
             except Exception:
                 global_sources = []
 
-        for price in price_points:
+        # Prepare tasks for parallel execution
+        async def run_single_price_simulation(price: float) -> tuple[float, SimulationResult]:
             # Inject price into product description
             product_with_price = f"{base_product_description}\n\nCena: {price:.2f} PLN"
-
-            result = await self.simulation_engine.run_simulation(
+            
+            sim_result = await self.simulation_engine.run_simulation(
                 project_id=project_id,
                 product_description=product_with_price,
                 target_audience=target_audience,
@@ -459,7 +456,12 @@ class PriceSensitivityEngine:
                 enable_web_search=enable_web_search,
                 global_sources=global_sources or None,
             )
+            return price, sim_result
 
+        tasks = [run_single_price_simulation(p) for p in price_points]
+        sim_results = await asyncio.gather(*tasks)
+
+        for price, result in sim_results:
             results[price] = {
                 "mean_purchase_intent": result.mean_purchase_intent,
                 "distribution": result.aggregate_distribution.model_dump(),
