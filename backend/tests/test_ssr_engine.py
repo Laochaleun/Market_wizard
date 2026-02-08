@@ -167,6 +167,37 @@ class TestSSREngine:
         assert res_general.raw_expected_score == pytest.approx(res_ecommerce.raw_expected_score)
         assert res_general.expected_score != pytest.approx(res_ecommerce.expected_score)
 
+    def test_rate_responses_accepts_per_row_domain_hints(self):
+        general = IsotonicCalibrator(
+            x_sorted=np.array([1.0, 5.0], dtype=float),
+            y_fitted=np.array([1.0, 5.0], dtype=float),
+        )
+        short_en = IsotonicCalibrator(
+            x_sorted=np.array([1.0, 5.0], dtype=float),
+            y_fitted=np.array([2.0, 4.0], dtype=float),
+        )
+        policy = DomainCalibrationPolicy(
+            default_domain="general",
+            calibrators={
+                "general": general,
+                "purchase_intent_short_en": short_en,
+            },
+        )
+        engine = SSREngine(
+            embedding_client=MockEmbeddingClient(),
+            language=Language.EN,
+            score_calibration_policy=policy,
+        )
+        responses = [
+            "I would definitely buy this product",
+            "I would definitely buy this product",
+        ]
+        hints = ["general", "purchase_intent_short_en"]
+        results = engine.rate_responses(responses, domain_hints=hints)
+        assert len(results) == 2
+        assert results[0].raw_expected_score == pytest.approx(results[1].raw_expected_score)
+        assert results[0].expected_score != pytest.approx(results[1].expected_score)
+
 
 class TestLikertDistribution:
     """Test Likert distribution model."""

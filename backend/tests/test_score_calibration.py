@@ -57,4 +57,34 @@ def test_domain_policy_select_and_roundtrip(tmp_path: Path) -> None:
     assert np.allclose(loaded.select("general").transform(x), np.array([1.0]))
     assert np.allclose(loaded.select("ecommerce").transform(x), np.array([2.0]))
     assert np.allclose(loaded.select("purchase_intent").transform(x), np.array([2.0]))
+    assert np.allclose(loaded.select("purchase_intent_short_en").transform(x), np.array([2.0]))
+    assert np.allclose(loaded.select("review_long_en").transform(x), np.array([1.0]))
     assert loaded.select("unknown") is not None
+
+
+def test_domain_policy_prefers_typed_and_language_specific_keys() -> None:
+    general = IsotonicCalibrator(
+        x_sorted=np.array([1.0, 5.0], dtype=float),
+        y_fitted=np.array([1.0, 5.0], dtype=float),
+    )
+    short_en = IsotonicCalibrator(
+        x_sorted=np.array([1.0, 5.0], dtype=float),
+        y_fitted=np.array([1.5, 4.5], dtype=float),
+    )
+    short_pl = IsotonicCalibrator(
+        x_sorted=np.array([1.0, 5.0], dtype=float),
+        y_fitted=np.array([1.7, 4.3], dtype=float),
+    )
+    policy = DomainCalibrationPolicy(
+        default_domain="general",
+        calibrators={
+            "general": general,
+            "purchase_intent_short_en": short_en,
+            "purchase_intent_short_pl": short_pl,
+        },
+    )
+    x = np.array([1.0], dtype=float)
+    assert np.allclose(policy.select("purchase_intent_short_en").transform(x), np.array([1.5]))
+    assert np.allclose(policy.select("purchase_intent_short_pl").transform(x), np.array([1.7]))
+    # Fallback to general when typed key does not exist.
+    assert np.allclose(policy.select("review_long_en").transform(x), np.array([1.0]))

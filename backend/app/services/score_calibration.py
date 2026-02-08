@@ -75,17 +75,43 @@ class DomainCalibrationPolicy:
     default_domain: str
     calibrators: dict[str, IsotonicCalibrator]
 
+    def _resolve_candidates(self, domain_hint: str | None) -> list[str]:
+        if not domain_hint:
+            return []
+        key = str(domain_hint).strip().lower()
+        if not key:
+            return []
+
+        candidates: list[str] = [key]
+        if key.endswith("_pl") or key.endswith("_en"):
+            base = key[:-3]
+            if base:
+                candidates.append(base)
+
+        if key.startswith("purchase_intent_short"):
+            candidates.extend(["purchase_intent", "ecommerce"])
+        elif key.startswith("purchase_intent"):
+            candidates.append("ecommerce")
+        elif key == "ecommerce":
+            candidates.append("purchase_intent")
+        elif key.startswith("review_long"):
+            candidates.append("general")
+
+        # Deduplicate while preserving priority order.
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for candidate in candidates:
+            if candidate not in seen:
+                seen.add(candidate)
+                ordered.append(candidate)
+        return ordered
+
     def select(self, domain_hint: str | None = None) -> IsotonicCalibrator | None:
         if not self.calibrators:
             return None
-        if domain_hint:
-            key = str(domain_hint).strip().lower()
-            if key == "purchase_intent" and "purchase_intent" not in self.calibrators and "ecommerce" in self.calibrators:
-                key = "ecommerce"
-            elif key == "ecommerce" and "ecommerce" not in self.calibrators and "purchase_intent" in self.calibrators:
-                key = "purchase_intent"
-            if key in self.calibrators:
-                return self.calibrators[key]
+        for candidate in self._resolve_candidates(domain_hint):
+            if candidate in self.calibrators:
+                return self.calibrators[candidate]
         return self.calibrators.get(self.default_domain)
 
     def to_dict(self) -> dict:

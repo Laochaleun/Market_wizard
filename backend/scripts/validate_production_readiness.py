@@ -507,7 +507,11 @@ def main() -> None:
     purchase_hybrid_alphas = [i / 10.0 for i in range(1, 10)]
     if domain_policy is not None:
         pooled_policy_scores["domain_policy_artifact"] = []
-        if domain_policy.select(domain_hint="purchase_intent") is not None:
+        if (
+            domain_policy.select(domain_hint="purchase_intent_short_en") is not None
+            or domain_policy.select(domain_hint="purchase_intent_short_pl") is not None
+            or domain_policy.select(domain_hint="purchase_intent") is not None
+        ):
             has_purchase_domain_calibrator = True
             pooled_policy_scores["purchase_domain_only_calibrated"] = []
             for alpha in purchase_hybrid_alphas:
@@ -537,7 +541,15 @@ def main() -> None:
             blend_scores[f"blend_{alpha:.1f}"] = np.clip(raw_scores + alpha * (cal_scores - raw_scores), 1.0, 5.0)
         is_pl = ds.language == Language.PL
         is_purchase_intent = "Amazon" in ds.name or "Allegro" in ds.name or "App Reviews" in ds.name
-        domain_hint = "purchase_intent" if is_purchase_intent else "general"
+        if "Allegro" in ds.name:
+            domain_hint = "purchase_intent_short_pl"
+            purchase_hint = "purchase_intent_short_pl"
+        elif is_purchase_intent:
+            domain_hint = "purchase_intent_short_en"
+            purchase_hint = "purchase_intent_short_en"
+        else:
+            domain_hint = "review_long_en"
+            purchase_hint = "purchase_intent_short_en"
         pl_only = cal_scores if is_pl else raw_scores
         purchase_intent_only = cal_scores if is_purchase_intent else raw_scores
         domain_policy_scores = raw_scores
@@ -547,7 +559,7 @@ def main() -> None:
             chosen = domain_policy.select(domain_hint=domain_hint)
             if chosen is not None:
                 domain_policy_scores = chosen.transform(raw_scores)
-            purchase_cal = domain_policy.select(domain_hint="purchase_intent")
+            purchase_cal = domain_policy.select(domain_hint=purchase_hint)
             if has_purchase_domain_calibrator and purchase_cal is not None:
                 if is_purchase_intent:
                     purchase_domain_only = purchase_cal.transform(raw_scores)

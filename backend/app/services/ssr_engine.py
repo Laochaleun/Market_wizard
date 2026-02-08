@@ -254,9 +254,22 @@ class SSREngine:
             raw_similarities=avg_pmf,
         )
 
-    def rate_responses(self, text_responses: List[str], *, domain_hint: str | None = None) -> List[SSRResult]:
+    def rate_responses(
+        self,
+        text_responses: List[str],
+        *,
+        domain_hint: str | None = None,
+        domain_hints: List[str | None] | None = None,
+    ) -> List[SSRResult]:
         """Rate multiple responses efficiently."""
-        return [self.rate_response(resp, domain_hint=domain_hint) for resp in text_responses]
+        if domain_hints is None:
+            return [self.rate_response(resp, domain_hint=domain_hint) for resp in text_responses]
+        if len(domain_hints) != len(text_responses):
+            raise ValueError("domain_hints length must match text_responses length.")
+        return [
+            self.rate_response(resp, domain_hint=hint)
+            for resp, hint in zip(text_responses, domain_hints)
+        ]
 
     def aggregate_to_survey_pmf(self, results: List[SSRResult]) -> LikertDistribution:
         """

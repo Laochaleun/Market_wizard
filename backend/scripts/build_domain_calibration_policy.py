@@ -310,7 +310,7 @@ def main() -> None:
     print(f"Model={args.model} anchor_variant={args.anchor_variant} T={args.temperature} eps={args.epsilon}")
     client = LocalEmbeddingClient(model_name=args.model)
 
-    # general domain: Yelp reviews
+    # General long-review domain (EN): Yelp reviews
     yelp_x, yelp_y = _load_yelp(args.limit_yelp, args.seed)
     gen_x = yelp_x
     gen_y = yelp_y
@@ -337,7 +337,9 @@ def main() -> None:
             seed=args.seed,
         )
 
-    # purchase_intent domain: Amazon 2023 + App Reviews + Allegro
+    # Purchase-intent short domains:
+    # - EN: Amazon 2023 + App Reviews
+    # - PL: Allegro
     app_x, app_y = _load_app_reviews(args.limit_app, args.seed + 1)
     amz_x, amz_y = _load_amazon_2023(args.amazon_per_category, args.amazon_max_scan, args.seed + 2)
     all_x, all_y = _load_allegro(args.limit_allegro, args.seed + 3)
@@ -365,27 +367,51 @@ def main() -> None:
         temperature=args.temperature,
         epsilon=args.epsilon,
     )
-    ecom_y = np.concatenate([amz_y, app_y, all_y])
-    ecom_scores = np.concatenate([amz_scores, app_scores, allegro_scores])
-    if args.optimize == "off1":
-        ecommerce_cal, ecommerce_diag = _fit_domain_calibrator_off1_tuned(
-            ecom_scores,
-            ecom_y,
+    ecom_en_y = np.concatenate([amz_y, app_y])
+    ecom_en_scores = np.concatenate([amz_scores, app_scores])
+    ecom_pl_y = all_y
+    ecom_pl_scores = allegro_scores
+    ecom_y = np.concatenate([ecom_en_y, ecom_pl_y])
+    ecom_scores = np.concatenate([ecom_en_scores, ecom_pl_scores])
+
+    def fit_domain(scores: np.ndarray, labels: np.ndarray, seed: int):
+        if args.optimize == "off1":
+            return _fit_domain_calibrator_off1_tuned(
+                scores,
+                labels,
+                holdout_ratio=args.holdout_ratio,
+                seed=seed,
+            )
+        return _fit_domain_calibrator(
+            scores,
+            labels,
             holdout_ratio=args.holdout_ratio,
-            seed=args.seed + 7,
+            seed=seed,
         )
-    else:
-        ecommerce_cal, ecommerce_diag = _fit_domain_calibrator(
-            ecom_scores,
-            ecom_y,
-            holdout_ratio=args.holdout_ratio,
-            seed=args.seed + 7,
-        )
+
+    ecommerce_en_cal, ecommerce_en_diag = fit_domain(
+        ecom_en_scores,
+        ecom_en_y,
+        args.seed + 7,
+    )
+    ecommerce_pl_cal, ecommerce_pl_diag = fit_domain(
+        ecom_pl_scores,
+        ecom_pl_y,
+        args.seed + 8,
+    )
+    ecommerce_cal, ecommerce_diag = fit_domain(
+        ecom_scores,
+        ecom_y,
+        args.seed + 9,
+    )
 
     policy = DomainCalibrationPolicy(
         default_domain="general",
         calibrators={
             "general": general_cal,
+            "review_long_en": general_cal,
+            "purchase_intent_short_en": ecommerce_en_cal,
+            "purchase_intent_short_pl": ecommerce_pl_cal,
             "purchase_intent": ecommerce_cal,
             "ecommerce": ecommerce_cal,
         },
@@ -402,8 +428,13 @@ def main() -> None:
             "optimize": args.optimize,
             "general_train_rows": int(gen_y.size),
             "ecommerce_train_rows": int(ecom_y.size),
+            "purchase_intent_short_en_train_rows": int(ecom_en_y.size),
+            "purchase_intent_short_pl_train_rows": int(ecom_pl_y.size),
             "purchase_intent_train_rows": int(ecom_y.size),
             "general_diagnostics": general_diag,
+            "review_long_en_diagnostics": general_diag,
+            "purchase_intent_short_en_diagnostics": ecommerce_en_diag,
+            "purchase_intent_short_pl_diagnostics": ecommerce_pl_diag,
             "ecommerce_diagnostics": ecommerce_diag,
             "purchase_intent_diagnostics": ecommerce_diag,
         },

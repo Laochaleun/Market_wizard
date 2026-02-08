@@ -4,7 +4,8 @@ v0.5.6 (2026-02-08) - Stage 2 calibration/anchors iteration (in progress, not pr
   - `paper_general_v1`
   - `paper_general_v2`
   - `paper_general_v3`
-  - default switched to `paper_general_v3` in `backend/app/i18n.py`.
+  - `paper_general_v4`
+  - default switched to `paper_general_v4` in `backend/app/i18n.py`.
 - Added anchor-variant selection plumbing in evaluation/training scripts:
   - `backend/scripts/validate_production_readiness.py` (`--anchor-variant`)
   - `backend/scripts/tune_ssr_hierarchical.py` (`--anchor-variant`)
@@ -47,6 +48,32 @@ v0.5.6 (2026-02-08) - Stage 2 calibration/anchors iteration (in progress, not pr
 - Final status of this commit:
   - Stage 2 significantly advanced and better instrumented,
   - but still **not production-ready** (`Decision: FAIL` on hard gates).
+- Added `paper_general_v4` bilingual (PL+EN) anchor set and switched default anchor variant to `paper_general_v4`.
+- Re-trained v4 calibration artifacts and applied best-performing combo to runtime defaults:
+  - `backend/app/data/ssr_calibrator_default.json` (optimize=`balanced`, anchor=`paper_general_v4`)
+  - `backend/app/data/ssr_calibration_policy_default.json` (optimize=`mae`, anchor=`paper_general_v4`)
+- Full validation report for selected v4 artifacts:
+  - `reports/production_readiness_validation_2026-02-08_stage2_v4_full_best.md`
+  - best policy: `domain_policy_artifact`
+  - outcome still `FAIL` (MAE gate and Off1 CI gate not yet met).
+- Implemented typed purchase-intent calibration routing (app-aligned):
+  - runtime hinting now distinguishes:
+    - `purchase_intent_short_en`
+    - `purchase_intent_short_pl`
+    - `review_long_en`
+  - with backward-compatible fallback to `purchase_intent` / `ecommerce` / `general`.
+- Added typed-domain training in `backend/scripts/build_domain_calibration_policy.py`:
+  - separate calibrators for EN short PI, PL short PI, and EN long-review.
+- Added typed-domain validation routing in `backend/scripts/validate_production_readiness.py`.
+- Added regression tests for typed-domain selection and per-row domain hints:
+  - `backend/tests/test_score_calibration.py`
+  - `backend/tests/test_ssr_engine.py`
+- Full typed-policy validation reports:
+  - `reports/production_readiness_validation_2026-02-08_stage2_v4_typed_full_mae.md`
+  - `reports/production_readiness_validation_2026-02-08_stage2_v4_typed_full_off1.md`
+- Applied best typed-policy runtime artifact:
+  - `backend/app/data/ssr_calibration_policy_default.json` <- `ssr_policy_v4_typed_full_mae.json`
+  - outcome remains `FAIL`, but MAE improved vs prior v4 best (`0.6229 -> 0.6143`).
 
 v0.5.5 (2026-02-07) - Stage 1 calibration framework and external validation
 - Switched runtime SSR defaults to match calibration training setup:

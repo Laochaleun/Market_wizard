@@ -597,3 +597,221 @@ We cache every generated HTML/PDF via `processing_utils.save_file_to_cache` and 
 2. Refit domain policy using stricter per-domain holdout diagnostics and possibly separate purchase-intent subdomains (`amazon_like`, `app_like`, `pl_retail`) if data supports it.
 3. Keep same hard gates and run only full-comparison experiments (no gate relaxation).
 4. Track a fixed “best-known” benchmark row and require explicit improvement before replacing runtime artifacts.
+
+## Follow-up (2026-02-08) - Stage 2B (v4 typed-domain calibration), full execution log
+
+### Critical methodology requirement for all next sessions (MUST)
+- The calibration and SSR workflow **must always** be guided by the reference paper:
+  - `arXiv:2510.08338v3`
+  - local copy available at: `/Users/pawel/Documents/!Praca/Subverse/Human purchase intent/2510.08338v3.pdf`
+- This is not optional context. It is a hard requirement for future iterations.
+- Practical implications enforced in this session:
+  1. Anchor statements must remain short, generic, and domain-independent.
+  2. Anchors must represent purchase-intent likelihood gradient (unlikely -> neutral/uncertain -> likely).
+  3. SSR remains text-first; no direct Likert elicitation logic introduced.
+  4. Temperature/epsilon consistency maintained (`T=1.0`, `eps=0.0`) unless explicitly re-validated.
+
+### Session objective
+- Continue Stage 2 after v4 anchors and close the MAE/Off1 gate gap without violating paper-style PI elicitation.
+- Replace platform-like domain split assumption with app-aligned split by **response type**:
+  - `purchase_intent_short`
+  - `review_long`
+  - with language-specific variants (`_en`, `_pl`) where relevant.
+
+### Starting point at session entry
+- Prior best v4 full validation (before typed-domain runtime changes):
+  - report: `reports/production_readiness_validation_2026-02-08_stage2_v4_full_best.md`
+  - best policy: `domain_policy_artifact`
+  - MAE: `0.6229`
+  - Off1: `0.9200`
+  - Decision: `FAIL`
+- Legacy near-pass from earlier stage remained:
+  - MAE `0.6092`
+  - Off1 `0.9189`
+
+### Code changes completed (Stage 2B)
+
+#### 1) Domain policy selection upgraded to typed/language-aware fallback graph
+- File: `backend/app/services/score_calibration.py`
+- Added hierarchical candidate resolution in `DomainCalibrationPolicy`:
+  - accepts typed hints such as:
+    - `purchase_intent_short_en`
+    - `purchase_intent_short_pl`
+    - `review_long_en`
+  - preserves backward compatibility via fallback chain to:
+    - `purchase_intent`
+    - `ecommerce`
+    - `general`
+- Behavior:
+  - first tries exact key,
+  - then removes language suffix if needed,
+  - then applies type-level fallback,
+  - finally uses `default_domain`.
+
+#### 2) SSR batch scoring now supports per-row domain hints
+- File: `backend/app/services/ssr_engine.py`
+- `rate_responses()` signature extended:
+  - supports `domain_hints: List[str | None]`
+  - validates length consistency with response list
+  - keeps existing `domain_hint` behavior for backward compatibility.
+
+#### 3) Simulation runtime now classifies SSR input by type + language
+- File: `backend/app/services/simulation_engine.py`
+- Added `_build_ssr_input_and_hint(opinion, ssr_text)`:
+  - if dedicated SSR text exists -> `purchase_intent_short_{lang}`
+  - else extracted PI sentence is used,
+  - if extracted text equals long full opinion and is long enough, classified as `review_long_{lang}`.
+- `run_simulation()` now builds:
+  - `text_responses`
+  - matching per-response `domain_hints`
+- SSR scoring call updated to pass `domain_hints` list instead of one global hint.
+
+#### 4) Domain policy training script upgraded to typed domains
+- File: `backend/scripts/build_domain_calibration_policy.py`
+- Training partition now explicit:
+  - `review_long_en` <- Yelp (general long-review proxy)
+  - `purchase_intent_short_en` <- Amazon 2023 + App Reviews
+  - `purchase_intent_short_pl` <- Allegro KLEJ
+  - aggregated compatibility calibrator still emitted as `purchase_intent`/`ecommerce`
+- Metadata extended with typed diagnostics and train row counts.
+
+#### 5) Validation routing aligned with typed domains
+- File: `backend/scripts/validate_production_readiness.py`
+- Domain hints for policy routing changed to:
+  - Allegro -> `purchase_intent_short_pl`
+  - Amazon/App -> `purchase_intent_short_en`
+  - Yelp -> `review_long_en`
+- Purchase-domain hybrid logic now checks typed purchase calibrators first, then compatibility key.
+
+#### 6) Test coverage extended
+- Updated tests:
+  - `backend/tests/test_score_calibration.py`
+  - `backend/tests/test_ssr_engine.py`
+- Added/updated assertions for:
+  - typed-domain fallback behavior,
+  - per-row domain hint scoring in SSR batch path.
+- Additional anchor integrity test introduced in this broader v4 stream:
+  - `backend/tests/test_i18n_anchors.py`
+
+### Validation and training runs executed in this session
+
+#### A) Reference v4 full run (baseline for this session branch)
+- Report:
+  - `reports/production_readiness_validation_2026-02-08_stage2_v4_full_best.md`
+- Best policy:
+  - `domain_policy_artifact`
+- Metrics:
+  - MAE `0.6229`
+  - Off1 `0.9200`
+- Verdict:
+  - `FAIL`
+
+#### B) Typed-domain smoke training + smoke validation
+- Policy artifact (small sample smoke):
+  - `reports/ssr_policy_v4_typed_smoke.json`
+- Validation report (small sample smoke):
+  - `reports/production_readiness_validation_2026-02-08_stage2_v4_typed_smoke.md`
+- Purpose:
+  - verify end-to-end typed routing/training works before expensive full runs.
+- Result:
+  - technically successful execution,
+  - still `FAIL` (expected at smoke scale).
+
+#### C) Full typed policy training artifacts
+- MAE objective:
+  - `reports/ssr_policy_v4_typed_full_mae.json`
+  - holdout diagnostics printed by trainer:
+    - general MAE `0.7248 -> 0.6295`
+    - ecommerce/purchase aggregate MAE `0.9389 -> 0.6132`
+- Off1 objective:
+  - `reports/ssr_policy_v4_typed_full_off1.json`
+  - holdout diagnostics printed by trainer:
+    - general MAE `0.7248 -> 0.6257`
+    - ecommerce/purchase aggregate MAE `0.9389 -> 0.7680`
+
+#### D) Full production-readiness runs for typed policies
+- MAE typed policy full report:
+  - `reports/production_readiness_validation_2026-02-08_stage2_v4_typed_full_mae.md`
+  - best policy: `domain_policy_artifact`
+  - MAE: `0.6143`
+  - Off1: `0.9187`
+  - Spearman: `0.7674`
+  - Decision: `FAIL`
+- Off1 typed policy full report:
+  - `reports/production_readiness_validation_2026-02-08_stage2_v4_typed_full_off1.md`
+  - best policy: `domain_policy_artifact`
+  - MAE: `0.7183`
+  - Off1: `0.9278`
+  - Spearman: `0.7546`
+  - Decision: `FAIL`
+
+### Comparative conclusions from this session
+- Typed MAE policy produced the best overall compromise for current app goals:
+  - MAE improved versus prior v4 full best:
+    - `0.6229 -> 0.6143`
+  - Off1 slightly decreased:
+    - `0.9200 -> 0.9187`
+  - Ranking/correlation-related behavior improved (Spearman up in best policy row).
+- Typed Off1 policy improved Off1 but with unacceptable MAE cost:
+  - MAE inflated to `0.7183`.
+- Gate status still unresolved at full scale:
+  - MAE gate: fail
+  - Off1 gate: fail (for selected MAE typed policy)
+  - Spearman drop gate: pass
+  - max per-dataset MAE regression gate: pass
+
+### Runtime artifacts applied at end of session
+- Global calibrator default kept as:
+  - `backend/app/data/ssr_calibrator_default.json`
+  - source artifact lineage: v4 balanced global calibrator
+- Domain policy default updated to typed MAE full policy:
+  - `backend/app/data/ssr_calibration_policy_default.json`
+  - source: `reports/ssr_policy_v4_typed_full_mae.json`
+- Confirmed policy contains typed domains + compatibility keys:
+  - `general`
+  - `review_long_en`
+  - `purchase_intent_short_en`
+  - `purchase_intent_short_pl`
+  - `purchase_intent`
+  - `ecommerce`
+
+### Reporting/documentation updates made
+- Added calibration summary report for stakeholders:
+  - `reports/calibration_report_08022026.md`
+  - includes gate goals/results and practical expected deviation interpretation.
+- Changelog updated with:
+  - v4 default anchors,
+  - typed-domain calibration routing,
+  - full report references,
+  - selected runtime artifact decision.
+
+### Current known best checkpoints (important)
+1. Historical near-pass (legacy stage):
+   - MAE `0.6092`, Off1 `0.9189`
+2. Best v4 full before typed split:
+   - MAE `0.6229`, Off1 `0.9200`
+3. Best typed full (selected now for runtime):
+   - MAE `0.6143`, Off1 `0.9187`
+
+### Why this still matters despite FAIL
+- Infrastructure and routing now align much better with real app semantics:
+  - calibration by response type + language, not by platform branding.
+- This removes a major conceptual mismatch noted in-session.
+- Remaining work is now mostly numerical optimization under fixed gates, not architecture gap.
+
+### Explicit next-session plan (carry-forward)
+1. Keep paper-first constraints active (required).
+2. Add `paper_general_v4.1` micro-edits (minimal anchor text adjustments at 3/4 intensity only).
+3. Explore piecewise calibration (two-segment monotonic mapping with continuity) to improve MAE without sacrificing Off1 CI.
+4. Run full protocol only (13k rows, bootstrap 1000, split-half 300).
+5. Replace runtime artifacts **only** when new run strictly improves best-known row per agreed objective.
+
+### Operational notes
+- Full external runs require out-of-sandbox network access to HF.
+- In sandbox/offline mode, scripts can skip datasets or stall on model/data fetch; prefer escalated runs for canonical results.
+- Do not interpret smoke-run metrics as decision-grade.
+
+### Final state at session end
+- Stage: **Stage 2B** (typed-domain calibration alignment with app purpose)
+- Decision status: still **not production-ready** under hard gates.
+- Key achievement: architecture and calibration routing now reflect app use-case and paper methodology more faithfully.

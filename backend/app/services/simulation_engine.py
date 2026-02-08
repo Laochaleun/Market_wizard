@@ -106,6 +106,22 @@ class SimulationEngine:
 
         return cleaned
 
+    def _build_ssr_input_and_hint(self, opinion: str, ssr_text: str | None) -> tuple[str, str]:
+        """Prepare SSR input text and calibrated domain hint."""
+        lang_suffix = "pl" if self.language == Language.PL else "en"
+
+        if isinstance(ssr_text, str) and ssr_text.strip():
+            return ssr_text.strip(), f"purchase_intent_short_{lang_suffix}"
+
+        extracted = self._extract_purchase_intent_text(opinion)
+        extracted_clean = (extracted or "").strip()
+        opinion_clean = (opinion or "").strip()
+        word_count = len(extracted_clean.split())
+        is_review_like = extracted_clean == opinion_clean and word_count >= 28
+        if is_review_like:
+            return extracted_clean, f"review_long_{lang_suffix}"
+        return extracted_clean, f"purchase_intent_short_{lang_suffix}"
+
     async def _generate_opinion_for_persona(
         self,
         persona: Persona,
@@ -234,15 +250,15 @@ class SimulationEngine:
             raise RuntimeError("Wszystkie zapytania do LLM zakończyły się błędem")
 
         # Step 3: Rate opinions using SSR
-        text_responses = []
+        text_responses: List[str] = []
+        domain_hints: List[str] = []
         for _, opinion, _, ssr_text in valid_opinions:
-            if isinstance(ssr_text, str) and ssr_text.strip():
-                text_responses.append(ssr_text.strip())
-            else:
-                text_responses.append(self._extract_purchase_intent_text(opinion))
+            ssr_input, domain_hint = self._build_ssr_input_and_hint(opinion, ssr_text)
+            text_responses.append(ssr_input)
+            domain_hints.append(domain_hint)
         ssr_results: List[SSRResult] = self.ssr_engine.rate_responses(
             text_responses,
-            domain_hint="purchase_intent",
+            domain_hints=domain_hints,
         )
 
         # Step 4: Build agent responses
