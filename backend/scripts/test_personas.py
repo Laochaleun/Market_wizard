@@ -6,19 +6,21 @@ Tests occupation distribution, income ranges, and demographic correlations.
 
 import sys
 import os
+import argparse
+import random
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collections import Counter
 from app.services.persona_manager import PersonaManager
 from app.i18n import Language
 
-def test_occupation_distribution():
+def test_occupation_distribution(language: Language):
     """Test that occupation distribution follows population weights."""
     print("=" * 60)
     print("TEST 1: Rozkład zawodów (wagi populacyjne GUS BAEL 2024)")
     print("=" * 60)
     
-    pm = PersonaManager(language=Language.PL)
+    pm = PersonaManager(language=language)
     occupations = [pm.generate_persona(index=i).occupation for i in range(1000)]
     counts = Counter(occupations)
     
@@ -27,16 +29,18 @@ def test_occupation_distribution():
         print(f"  {occ:25} {count:4} ({count/10:.1f}%)")
     
     # Verify doctors are rare (~1.2%)
-    doctor_count = counts.get('lekarz', 0)
-    print(f"\nLekarze: {doctor_count} (oczekiwane: ~12-20 z 1000)")
+    doctor_label = 'lekarz' if language == Language.PL else 'doctor'
+    doctor_count = counts.get(doctor_label, 0)
+    print(f"\nLekarze/Doctors: {doctor_count} (oczekiwane: ~12-20 z 1000)")
     if doctor_count > 50:
         print("  ❌ ZA DUŻO lekarzy!")
     else:
         print("  ✅ OK - lekarze są rzadcy zgodnie z GUS")
     
     # Verify salespeople are common (~8%)
-    salesperson_count = counts.get('sprzedawca', 0)
-    print(f"\nSprzedawcy: {salesperson_count} (oczekiwane: ~60-100 z 1000)")
+    sales_label = 'sprzedawca' if language == Language.PL else 'sales associate'
+    salesperson_count = counts.get(sales_label, 0)
+    print(f"\nSprzedawcy/Sales: {salesperson_count} (oczekiwane: ~60-100 z 1000)")
     if salesperson_count < 30:
         print("  ⚠️ Za mało sprzedawców")
     else:
@@ -45,13 +49,13 @@ def test_occupation_distribution():
     return True
 
 
-def test_income_by_occupation():
+def test_income_by_occupation(language: Language):
     """Test that incomes are realistic for each occupation."""
     print("\n" + "=" * 60)
     print("TEST 2: Zarobki według zawodów (GUS 2024)")
     print("=" * 60)
     
-    pm = PersonaManager(language=Language.PL)
+    pm = PersonaManager(language=language)
     
     occupation_incomes = {}
     for i in range(500):
@@ -67,10 +71,11 @@ def test_income_by_occupation():
         max_inc = max(incomes)
         print(f"  {occ:25} avg: {avg:>8,.0f} PLN  (min: {min_inc:>6,}, max: {max_inc:>6,})")
     
-    # Check programista earns well
-    if 'programista' in occupation_incomes:
-        prog_avg = sum(occupation_incomes['programista']) / len(occupation_incomes['programista'])
-        print(f"\nProgramista średnia: {prog_avg:,.0f} PLN (oczekiwane: 6000-15000)")
+    # Check software developer earns well
+    dev_label = 'programista' if language == Language.PL else 'software developer'
+    if dev_label in occupation_incomes:
+        prog_avg = sum(occupation_incomes[dev_label]) / len(occupation_incomes[dev_label])
+        print(f"\nProgramista/Dev średnia: {prog_avg:,.0f} PLN (oczekiwane: 6000-15000)")
         if prog_avg >= 5500:
             print("  ✅ OK")
         else:
@@ -79,20 +84,20 @@ def test_income_by_occupation():
     return True
 
 
-def test_gender_wage_gap():
+def test_gender_wage_gap(language: Language, samples: int):
     """Test that gender wage gap is applied."""
     print("\n" + "=" * 60)
     print("TEST 3: Różnica zarobków M/F (GUS 2024: ~17%)")
     print("=" * 60)
     
-    pm = PersonaManager(language=Language.PL)
+    pm = PersonaManager(language=language)
     
     male_incomes = []
     female_incomes = []
     
-    for i in range(500):
+    for i in range(samples):
         p = pm.generate_persona(index=i)
-        if p.occupation not in ('emeryt', 'rencista', 'student'):
+        if p.occupation not in ('emeryt', 'rencista', 'student', 'retiree', 'disability pensioner'):
             if p.gender == 'M':
                 male_incomes.append(p.income)
             else:
@@ -115,22 +120,27 @@ def test_gender_wage_gap():
     return True
 
 
-def test_age_occupation_correlation():
+def test_age_occupation_correlation(language: Language):
     """Test that young people don't have professions requiring degrees."""
     print("\n" + "=" * 60)
     print("TEST 4: Korelacja wiek-zawód")
     print("=" * 60)
     
-    pm = PersonaManager(language=Language.PL)
+    pm = PersonaManager(language=language)
     
-    medical_occupations = ['lekarz', 'dentysta', 'prawnik', 'architekt', 'farmaceuta']
+    medical_occupations = (
+        ['lekarz', 'dentysta', 'prawnik', 'architekt', 'farmaceuta']
+        if language == Language.PL
+        else ['doctor', 'dentist', 'lawyer', 'architect', 'pharmacist']
+    )
+    retiree_label = 'emeryt' if language == Language.PL else 'retiree'
     violations = []
     
     for i in range(500):
         p = pm.generate_persona(index=i)
         if p.occupation in medical_occupations and p.age < 24:
             violations.append(f"{p.age} lat, {p.occupation}")
-        if p.occupation == 'emeryt' and p.age < 60:
+        if p.occupation == retiree_label and p.age < 60:
             violations.append(f"{p.age} lat, emeryt!")
     
     if violations:
@@ -143,13 +153,13 @@ def test_age_occupation_correlation():
     return len(violations) == 0
 
 
-def test_retiree_distribution():
+def test_retiree_distribution(language: Language):
     """Test that retirees are more common with age."""
     print("\n" + "=" * 60)
     print("TEST 5: Rozkład emerytów według wieku")
     print("=" * 60)
     
-    pm = PersonaManager(language=Language.PL)
+    pm = PersonaManager(language=language)
     
     age_groups = {
         "18-59": {"total": 0, "retired": 0},
@@ -173,7 +183,7 @@ def test_retiree_distribution():
             group = "75+"
         
         age_groups[group]["total"] += 1
-        if p.occupation == "emeryt":
+        if p.occupation in ("emeryt", "retiree"):
             age_groups[group]["retired"] += 1
     
     print("\nProcent emerytów w grupach wiekowych:")
@@ -185,18 +195,18 @@ def test_retiree_distribution():
     return True
 
 
-def test_location_distribution():
+def test_location_distribution(language: Language):
     """Test that location distribution matches GUS 2024 weights."""
     print("\n" + "=" * 60)
     print("TEST 6: Rozkład lokalizacji (GUS 2024: wieś ~41%, metropolie ~13%)")
     print("=" * 60)
     
-    pm = PersonaManager(language=Language.PL)
+    pm = PersonaManager(language=language)
     
     # We need to map city names back to types to verify distribution
     from app.i18n import LOCATIONS
     inv_map = {}
-    for l_type, cities in LOCATIONS[Language.PL].items():
+    for l_type, cities in LOCATIONS[language].items():
         # Skip legacy keys to avoid overwriting specific categories
         if l_type in ("urban", "suburban"):
             continue
@@ -235,16 +245,22 @@ def test_location_distribution():
     return True
 
 
-if __name__ == "__main__":
-    print("\n🔍 TESTY GENEROWANIA PERSON Z DANYMI GUS 2024\n")
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--lang", choices=["pl", "en"], default="pl")
+    args = parser.parse_args()
+
+    language = Language.PL if args.lang == "pl" else Language.EN
+    print(f"\n🔍 TESTY GENEROWANIA PERSON Z DANYMI GUS 2024 ({args.lang.upper()})\n")
     
     all_passed = True
-    all_passed &= test_occupation_distribution()
-    all_passed &= test_income_by_occupation()
-    all_passed &= test_gender_wage_gap()
-    all_passed &= test_age_occupation_correlation()
-    all_passed &= test_retiree_distribution()
-    all_passed &= test_location_distribution()
+    all_passed &= test_occupation_distribution(language)
+    all_passed &= test_income_by_occupation(language)
+    random.seed(42)
+    all_passed &= test_gender_wage_gap(language, samples=4000)
+    all_passed &= test_age_occupation_correlation(language)
+    all_passed &= test_retiree_distribution(language)
+    all_passed &= test_location_distribution(language)
     
     print("\n" + "=" * 60)
     if all_passed:
@@ -252,3 +268,8 @@ if __name__ == "__main__":
     else:
         print("❌ NIEKTÓRE TESTY NIE PRZESZŁY")
     print("=" * 60)
+    return 0 if all_passed else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

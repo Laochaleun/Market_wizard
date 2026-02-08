@@ -11,6 +11,8 @@ Sources:
 Last updated: 2026-01-31
 """
 
+import json
+from pathlib import Path
 from typing import Dict, Any
 
 # =============================================================================
@@ -58,10 +60,29 @@ CITY_TO_REGION: Dict[str, str] = {
 # Źródło: GUS Struktura wynagrodzeń - różnica ok. 17% na niekorzyść kobiet
 # =============================================================================
 
-GENDER_WAGE_GAP: Dict[str, float] = {
+GENDER_WAGE_GAP_DEFAULT: Dict[str, float] = {
     "M": 1.085,   # mężczyźni ~8.5% powyżej mediany ogólnej
     "F": 0.915,   # kobiety ~8.5% poniżej mediany ogólnej
 }
+GENDER_WAGE_GAP: Dict[str, float] = dict(GENDER_WAGE_GAP_DEFAULT)
+
+
+def _load_gender_gap_calibration() -> None:
+    path = Path(__file__).resolve().with_name("gender_gap_calibration.json")
+    if not path.exists():
+        return
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        m_val = float(payload.get("M", GENDER_WAGE_GAP["M"]))
+        f_val = float(payload.get("F", GENDER_WAGE_GAP["F"]))
+        if m_val > 0 and f_val > 0:
+            GENDER_WAGE_GAP["M"] = m_val
+            GENDER_WAGE_GAP["F"] = f_val
+    except Exception:
+        return
+
+
+_load_gender_gap_calibration()
 
 # =============================================================================
 # LOKALIZACJA - KLASYFIKACJA WEDŁUG WIELKOŚCI (GUS 2024)
@@ -178,8 +199,10 @@ NATIONAL_WAGE_STATS_2024 = {
 # Wagi populacyjne dla zawodów - suma = 1.0 (tylko aktywni zawodowo)
 # Na podstawie struktury ISCO-08 i danych BAEL
 OCCUPATION_POPULATION_WEIGHTS: Dict[str, float] = {
-    # ISCO 1: Przedstawiciele władz, kierownicy (~5%)
-    "menedżer": 0.05,
+    # ISCO 1: Kierownicy (~6% populacji pracującej)
+    "menedżer": 0.025,
+    "dyrektor": 0.01,
+    "przedsiębiorca": 0.025,       # ~21% samozatrudnionych = ~3.5 mln, część to przedsiębiorcy
     
     # ISCO 2: Specjaliści (~22% populacji pracującej)
     "programista": 0.04,          # IT mocno reprezentowane
@@ -190,14 +213,16 @@ OCCUPATION_POPULATION_WEIGHTS: Dict[str, float] = {
     "farmaceuta": 0.003,          # ~50 tys.
     "inżynier": 0.03,             # różne branże
     "nauczyciel": 0.04,           # duża grupa
-    "pielęgniarka": 0.02,         # ~340 tys.
     
-    # ISCO 3: Technicy i średni personel (~12%)
+    # ISCO 3: Technicy i średni personel (~14%)
+    "pielęgniarka": 0.02,         # ~340 tys.
     "księgowy": 0.025,
     "grafik": 0.01,
+    "technik": 0.08,              # różne specjalizacje
     
-    # ISCO 4: Pracownicy biurowi (~10%)
-    "pracownik biurowy": 0.10,
+    # ISCO 4: Pracownicy biurowi (~8%)
+    "pracownik biurowy": 0.06,
+    "sekretarka": 0.02,
     
     # ISCO 5: Pracownicy usług i sprzedawcy (~16%)
     "sprzedawca": 0.08,           # duża grupa - handel
@@ -206,17 +231,25 @@ OCCUPATION_POPULATION_WEIGHTS: Dict[str, float] = {
     "kucharz": 0.02,
     "policjant": 0.006,           # ~100 tys.
     "strażak": 0.003,             # ~50 tys.
+    "ochroniarz": 0.015,          # duża branża
     
-    # ISCO 7: Robotnicy przemysłowi i rzemieślnicy (~14%)
-    "mechanik": 0.035,
+    # ISCO 6: Rolnicy (~8%)
+    "rolnik": 0.08,               # ~8% populacji pracującej
+    
+    # ISCO 7: Robotnicy przemysłowi i rzemieślnicy (~12%)
+    "mechanik": 0.025,
     "elektryk": 0.02,
-    "pracownik budowlany": 0.05,
+    "pracownik budowlany": 0.04,
+    "stolarz": 0.01,
+    "spawacz": 0.015,
     
     # ISCO 8: Operatorzy maszyn i kierowcy (~8%)
     "kierowca": 0.05,
+    "operator produkcji": 0.03,
     
-    # ISCO 9: Pracownicy przy pracach prostych (~7%)
-    # (rozproszeni w innych kategoriach)
+    # ISCO 9: Pracownicy przy pracach prostych (~6%)
+    "magazynier": 0.03,
+    "sprzątaczka": 0.025,
 }
 
 # Wagi dla osób nieaktywnych zawodowo/w szczególnych sytuacjach
@@ -471,6 +504,259 @@ OCCUPATION_INCOME_DATA: Dict[str, Dict[str, int]] = {
 }
 
 # =============================================================================
+# ROZKŁAD PŁCI W ZAWODACH (GUS BAEL 2024, MEN 2024, NIL 2024)
+# Źródło: GUS Aktywność ekonomiczna ludności 2024, branżowe raporty
+# =============================================================================
+
+OCCUPATION_GENDER_WEIGHTS: Dict[str, Dict[str, float]] = {
+    # Zawody sfeminizowane
+    "pielęgniarka": {"F": 0.97, "M": 0.03},
+    "nauczyciel": {"F": 0.84, "M": 0.16},
+    "fryzjer": {"F": 0.85, "M": 0.15},
+    "sprzedawca": {"F": 0.70, "M": 0.30},
+    "księgowy": {"F": 0.75, "M": 0.25},
+    "pracownik biurowy": {"F": 0.65, "M": 0.35},
+    "sekretarka": {"F": 0.95, "M": 0.05},
+    "farmaceuta": {"F": 0.80, "M": 0.20},
+    "kelner": {"F": 0.65, "M": 0.35},
+    "dentysta": {"F": 0.75, "M": 0.25},
+    "sprzątaczka": {"F": 0.90, "M": 0.10},
+    
+    # Zawody zrównoważone
+    "lekarz": {"F": 0.58, "M": 0.42},
+    "prawnik": {"F": 0.55, "M": 0.45},
+    "kucharz": {"F": 0.55, "M": 0.45},
+    "grafik": {"F": 0.45, "M": 0.55},
+    "architekt": {"F": 0.45, "M": 0.55},
+    "menedżer": {"F": 0.42, "M": 0.58},
+    "dyrektor": {"F": 0.35, "M": 0.65},
+    "technik": {"F": 0.30, "M": 0.70},
+    "magazynier": {"F": 0.35, "M": 0.65},
+    
+    # Zawody smaskulinizowane
+    "programista": {"F": 0.25, "M": 0.75},
+    "przedsiębiorca": {"F": 0.38, "M": 0.62},  # GUS: 38% kobiet wśród samozatrudnionych
+    "inżynier": {"F": 0.15, "M": 0.85},
+    "policjant": {"F": 0.15, "M": 0.85},
+    "ochroniarz": {"F": 0.10, "M": 0.90},
+    "kierowca": {"F": 0.05, "M": 0.95},
+    "strażak": {"F": 0.05, "M": 0.95},
+    "mechanik": {"F": 0.03, "M": 0.97},
+    "elektryk": {"F": 0.02, "M": 0.98},
+    "pracownik budowlany": {"F": 0.02, "M": 0.98},
+    "stolarz": {"F": 0.03, "M": 0.97},
+    "spawacz": {"F": 0.02, "M": 0.98},
+    "operator produkcji": {"F": 0.30, "M": 0.70},
+    "rolnik": {"F": 0.35, "M": 0.65},  # GUS: rolnictwo ~35% kobiet
+    
+    # Statusy specjalne - neutralne
+    "student": {"F": 0.55, "M": 0.45},
+    "emeryt": {"F": 0.60, "M": 0.40},  # Kobiety żyją dłużej
+    "rencista": {"F": 0.45, "M": 0.55},
+    "bezrobotny": {"F": 0.48, "M": 0.52},  # GUS: nieco więcej mężczyzn
+}
+
+# =============================================================================
+# WYKSZTAŁCENIE WEDŁUG WIEKU (GUS NSP 2021, CBOS 2024)
+# Rozkład w % dla każdej grupy wiekowej
+# =============================================================================
+
+EDUCATION_BY_AGE: Dict[str, Dict[str, float]] = {
+    "18-24": {
+        "podstawowe": 0.20,
+        "zasadnicze zawodowe": 0.15,
+        "średnie": 0.50,
+        "policealne": 0.05,
+        "wyższe": 0.10,
+    },
+    "25-34": {
+        "podstawowe": 0.05,
+        "zasadnicze zawodowe": 0.12,
+        "średnie": 0.30,
+        "policealne": 0.05,
+        "wyższe": 0.48,
+    },
+    "35-44": {
+        "podstawowe": 0.08,
+        "zasadnicze zawodowe": 0.25,
+        "średnie": 0.25,
+        "policealne": 0.05,
+        "wyższe": 0.37,
+    },
+    "45-54": {
+        "podstawowe": 0.12,
+        "zasadnicze zawodowe": 0.35,
+        "średnie": 0.25,
+        "policealne": 0.05,
+        "wyższe": 0.23,
+    },
+    "55-64": {
+        "podstawowe": 0.18,
+        "zasadnicze zawodowe": 0.32,
+        "średnie": 0.28,
+        "policealne": 0.05,
+        "wyższe": 0.17,
+    },
+    "65-74": {
+        "podstawowe": 0.25,
+        "zasadnicze zawodowe": 0.30,
+        "średnie": 0.26,
+        "policealne": 0.05,
+        "wyższe": 0.14,
+    },
+    "75+": {
+        "podstawowe": 0.32,
+        "zasadnicze zawodowe": 0.28,
+        "średnie": 0.24,
+        "policealne": 0.04,
+        "wyższe": 0.12,
+    },
+}
+
+# =============================================================================
+# MINIMALNE WYKSZTAŁCENIE DLA ZAWODU
+# =============================================================================
+
+OCCUPATION_MIN_EDUCATION: Dict[str, str] = {
+    # Zawody regulowane - wymagane wyższe
+    "lekarz": "wyższe",
+    "dentysta": "wyższe",
+    "farmaceuta": "wyższe",
+    "pielęgniarka": "wyższe",
+    "nauczyciel": "wyższe",
+    "prawnik": "wyższe",
+    "architekt": "wyższe",
+    "inżynier": "wyższe",
+
+    # Specjaliści i technicy
+    "programista": "średnie",
+    "księgowy": "średnie",
+    "grafik": "średnie",
+    "technik": "średnie",
+
+    # Kierownictwo i administracja
+    "menedżer": "średnie",
+    "dyrektor": "wyższe",
+    "przedsiębiorca": "średnie",
+    "pracownik biurowy": "średnie",
+    "sekretarka": "średnie",
+
+    # Służby i usługi (część wymaga średniego)
+    "policjant": "średnie",
+    "strażak": "średnie",
+    "ochroniarz": "podstawowe",
+    "sprzedawca": "podstawowe",
+    "kelner": "podstawowe",
+    "fryzjer": "zasadnicze zawodowe",
+    "kucharz": "zasadnicze zawodowe",
+
+    # Rolnictwo i prace proste
+    "rolnik": "podstawowe",
+    "magazynier": "podstawowe",
+    "sprzątaczka": "podstawowe",
+
+    # Rzemiosło i produkcja
+    "mechanik": "zasadnicze zawodowe",
+    "elektryk": "zasadnicze zawodowe",
+    "pracownik budowlany": "podstawowe",
+    "stolarz": "zasadnicze zawodowe",
+    "spawacz": "zasadnicze zawodowe",
+    "kierowca": "podstawowe",
+    "operator produkcji": "podstawowe",
+
+    # Statusy specjalne
+    "student": "średnie",
+    "emeryt": "podstawowe",
+    "rencista": "podstawowe",
+    "bezrobotny": "podstawowe",
+}
+
+# Współczynnik nadkwalifikacji (GUS 2024: 20% pracuje poniżej kwalifikacji)
+OVERQUALIFICATION_RATE = 0.20
+
+# =============================================================================
+# STAN CYWILNY WEDŁUG WIEKU (GUS NSP 2021, Tablica 3.8)
+# =============================================================================
+
+MARITAL_STATUS_BY_AGE: Dict[str, Dict[str, float]] = {
+    "18-24": {
+        "kawaler/panna": 0.92,
+        "małżeństwo": 0.07,
+        "rozwiedziony": 0.01,
+        "wdowiec/wdowa": 0.00,
+    },
+    "25-29": {
+        "kawaler/panna": 0.60,
+        "małżeństwo": 0.36,
+        "rozwiedziony": 0.04,
+        "wdowiec/wdowa": 0.00,
+    },
+    "30-34": {
+        "kawaler/panna": 0.30,
+        "małżeństwo": 0.62,
+        "rozwiedziony": 0.07,
+        "wdowiec/wdowa": 0.01,
+    },
+    "35-44": {
+        "kawaler/panna": 0.15,
+        "małżeństwo": 0.70,
+        "rozwiedziony": 0.13,
+        "wdowiec/wdowa": 0.02,
+    },
+    "45-54": {
+        "kawaler/panna": 0.08,
+        "małżeństwo": 0.72,
+        "rozwiedziony": 0.15,
+        "wdowiec/wdowa": 0.05,
+    },
+    "55-64": {
+        "kawaler/panna": 0.06,
+        "małżeństwo": 0.70,
+        "rozwiedziony": 0.13,
+        "wdowiec/wdowa": 0.11,
+    },
+    "65-74": {
+        "kawaler/panna": 0.04,
+        "małżeństwo": 0.60,
+        "rozwiedziony": 0.10,
+        "wdowiec/wdowa": 0.26,
+    },
+    "75+": {
+        "kawaler/panna": 0.03,
+        "małżeństwo": 0.35,
+        "rozwiedziony": 0.07,
+        "wdowiec/wdowa": 0.55,
+    },
+}
+
+# =============================================================================
+# POSIADANIE DZIECI WEDŁUG WIEKU (GUS 2024, szacunki)
+# =============================================================================
+
+HAS_CHILDREN_BY_AGE: Dict[str, float] = {
+    "18-24": 0.08,
+    "25-29": 0.35,
+    "30-34": 0.55,
+    "35-44": 0.78,
+    "45-54": 0.85,
+    "55-64": 0.82,
+    "65-74": 0.80,
+    "75+": 0.78,
+}
+
+# Średni wiek urodzenia pierwszego dziecka (GUS 2023)
+FIRST_CHILD_AVG_AGE = {"F": 29.0, "M": 33.0}
+
+# =============================================================================
+# WIEK EMERYTALNY WEDŁUG PŁCI (ZUS 2024)
+# =============================================================================
+
+RETIREMENT_AGE_BY_GENDER: Dict[str, float] = {
+    "M": 65.1,  # Mężczyźni
+    "F": 60.6,  # Kobiety
+}
+
+# =============================================================================
 # FUNKCJE POMOCNICZE
 # =============================================================================
 
@@ -494,3 +780,73 @@ def get_occupation_data(occupation_name: str) -> Dict[str, int]:
 def get_pension_for_gender(gender: str) -> Dict[str, int]:
     """Get pension data based on gender."""
     return PENSION_BY_GENDER.get(gender, PENSION_BY_GENDER["M"])
+
+
+def get_education_distribution_for_age(age: int) -> Dict[str, float]:
+    """Get education level distribution probability for a given age."""
+    if age < 25:
+        return EDUCATION_BY_AGE["18-24"]
+    elif age < 35:
+        return EDUCATION_BY_AGE["25-34"]
+    elif age < 45:
+        return EDUCATION_BY_AGE["35-44"]
+    elif age < 55:
+        return EDUCATION_BY_AGE["45-54"]
+    elif age < 65:
+        return EDUCATION_BY_AGE["55-64"]
+    elif age < 75:
+        return EDUCATION_BY_AGE["65-74"]
+    else:
+        return EDUCATION_BY_AGE["75+"]
+
+
+def get_marital_status_distribution_for_age(age: int) -> Dict[str, float]:
+    """Get marital status distribution probability for a given age."""
+    if age < 25:
+        return MARITAL_STATUS_BY_AGE["18-24"]
+    elif age < 30:
+        return MARITAL_STATUS_BY_AGE["25-29"]
+    elif age < 35:
+        return MARITAL_STATUS_BY_AGE["30-34"]
+    elif age < 45:
+        return MARITAL_STATUS_BY_AGE["35-44"]
+    elif age < 55:
+        return MARITAL_STATUS_BY_AGE["45-54"]
+    elif age < 65:
+        return MARITAL_STATUS_BY_AGE["55-64"]
+    elif age < 75:
+        return MARITAL_STATUS_BY_AGE["65-74"]
+    else:
+        return MARITAL_STATUS_BY_AGE["75+"]
+
+
+def get_has_children_probability(age: int) -> float:
+    """Get probability of having children for a given age."""
+    if age < 25:
+        return HAS_CHILDREN_BY_AGE["18-24"]
+    elif age < 30:
+        return HAS_CHILDREN_BY_AGE["25-29"]
+    elif age < 35:
+        return HAS_CHILDREN_BY_AGE["30-34"]
+    elif age < 45:
+        return HAS_CHILDREN_BY_AGE["35-44"]
+    elif age < 55:
+        return HAS_CHILDREN_BY_AGE["45-54"]
+    elif age < 65:
+        return HAS_CHILDREN_BY_AGE["55-64"]
+    elif age < 75:
+        return HAS_CHILDREN_BY_AGE["65-74"]
+    else:
+        return HAS_CHILDREN_BY_AGE["75+"]
+
+
+def get_occupation_gender_weight(occupation: str, gender: str) -> float:
+    """Get gender weight for occupation selection."""
+    if occupation in OCCUPATION_GENDER_WEIGHTS:
+        return OCCUPATION_GENDER_WEIGHTS[occupation].get(gender, 0.5)
+    return 0.5  # default 50/50
+
+
+def get_min_education_for_occupation(occupation: str) -> str:
+    """Get minimum required education level for an occupation."""
+    return OCCUPATION_MIN_EDUCATION.get(occupation, "podstawowe")

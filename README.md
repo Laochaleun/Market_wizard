@@ -288,7 +288,8 @@ Dane referencyjne znajdują się w:
 Aby zaktualizować dane po publikacji nowych raportów GUS:
 1. Edytuj `reference_data.py`
 2. Zaktualizuj komentarze ze źródłami
-3. Uruchom testy: `python scripts/test_personas.py`
+3. Skalibruj mnożnik luki płacowej: `make calibrate`
+4. Uruchom testy: `python scripts/test_personas.py`
 
 ## 📚 Metodologia SSR
 

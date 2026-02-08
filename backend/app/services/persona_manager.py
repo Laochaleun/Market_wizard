@@ -21,14 +21,23 @@ from app.i18n import Language, FIRST_NAMES, LOCATIONS, OCCUPATIONS
 from app.data.reference_data import (
     OCCUPATION_INCOME_DATA,
     OCCUPATION_POPULATION_WEIGHTS,
+    OCCUPATION_GENDER_WEIGHTS,
+    OCCUPATION_MIN_EDUCATION,
+    OVERQUALIFICATION_RATE,
     REGIONAL_WAGE_INDEX,
     GENDER_WAGE_GAP,
     LOCATION_WAGE_INDEX,
     LOCATION_POPULATION_WEIGHTS,
     PENSION_BY_GENDER,
     CITY_TO_REGION,
+    RETIREMENT_AGE_BY_GENDER,
     get_regional_multiplier,
     get_gender_distribution_for_age,
+    get_education_distribution_for_age,
+    get_marital_status_distribution_for_age,
+    get_has_children_probability,
+    get_occupation_gender_weight,
+    get_min_education_for_occupation,
 )
 
 # =============================================================================
@@ -55,15 +64,86 @@ INCOME_RANGES = {
     },
 }
 
-# Education levels
+# Education levels (ISCED classification, GUS NSP 2021)
 EDUCATION_LEVELS = {
-    Language.PL: ["podstawowe", "średnie", "wyższe"],
-    Language.EN: ["high school", "some college", "bachelor's degree", "master's degree"],
+    Language.PL: [
+        "podstawowe",
+        "zasadnicze zawodowe",
+        "średnie",
+        "policealne",
+        "wyższe",
+    ],
+    Language.EN: [
+        "primary",
+        "vocational",
+        "secondary",
+        "post-secondary",
+        "higher",
+    ],
 }
+
+# Mapping between PL and EN education levels for bilingual filter support
+EDUCATION_PL_TO_EN = {
+    "podstawowe": "primary",
+    "zasadnicze zawodowe": "vocational",
+    "średnie": "secondary",
+    "policealne": "post-secondary",
+    "wyższe": "higher",
+}
+EDUCATION_EN_TO_PL = {v: k for k, v in EDUCATION_PL_TO_EN.items()}
 
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+OCCUPATION_EN_TO_PL = {
+    "manager": "menedżer",
+    "director": "dyrektor",
+    "entrepreneur": "przedsiębiorca",
+    "doctor": "lekarz",
+    "dentist": "dentysta",
+    "lawyer": "prawnik",
+    "architect": "architekt",
+    "pharmacist": "farmaceuta",
+    "software developer": "programista",
+    "engineer": "inżynier",
+    "teacher": "nauczyciel",
+    "accountant": "księgowy",
+    "graphic designer": "grafik",
+    "nurse": "pielęgniarka",
+    "technician": "technik",
+    "office worker": "pracownik biurowy",
+    "secretary": "sekretarka",
+    "sales associate": "sprzedawca",
+    "hairdresser": "fryzjer",
+    "waiter": "kelner",
+    "chef": "kucharz",
+    "police officer": "policjant",
+    "firefighter": "strażak",
+    "security guard": "ochroniarz",
+    "farmer": "rolnik",
+    "mechanic": "mechanik",
+    "electrician": "elektryk",
+    "construction worker": "pracownik budowlany",
+    "carpenter": "stolarz",
+    "welder": "spawacz",
+    "driver": "kierowca",
+    "production operator": "operator produkcji",
+    "warehouse worker": "magazynier",
+    "cleaner": "sprzątaczka",
+    "student": "student",
+    "retiree": "emeryt",
+    "disability pensioner": "rencista",
+    "unemployed": "bezrobotny",
+}
+
+_missing_en = {
+    occ.get("name", "")
+    for occ in OCCUPATIONS.get(Language.EN, [])
+    if occ.get("name", "") not in OCCUPATION_EN_TO_PL
+}
+if _missing_en:
+    raise ValueError(f"Missing EN->PL occupation mapping for: {sorted(_missing_en)}")
 
 
 class GUSClient:
@@ -540,7 +620,7 @@ class PersonaManager:
         use_gus_demographics: bool = True,
     ):
         self.language = language
-        self.use_gus_demographics = use_gus_demographics and (language == Language.PL)
+        self.use_gus_demographics = use_gus_demographics
         
         if self.use_gus_demographics:
             self.gus_client = GUSClient()
@@ -574,6 +654,56 @@ class PersonaManager:
             if marker in lowered:
                 return marker_region == region
         return False
+
+    def _normalize_education(self, education: str | None) -> str | None:
+        """Normalize education string to match target language."""
+        if not education:
+            return None
+            
+        edu_lower = education.lower()
+        
+        if self.language == Language.PL:
+            # If already PL key
+            if edu_lower in EDUCATION_PL_TO_EN:
+                return edu_lower
+            # If EN key, translate to PL
+            if edu_lower in EDUCATION_EN_TO_PL:
+                return EDUCATION_EN_TO_PL[edu_lower]
+                
+        else: # EN
+            # If already EN key (which are values in PL_TO_EN dict, keys in EN_TO_PL)
+            if edu_lower in EDUCATION_EN_TO_PL:
+                return edu_lower
+            # If PL key, translate to EN
+            if edu_lower in EDUCATION_PL_TO_EN:
+                return EDUCATION_PL_TO_EN[edu_lower]
+                
+        # Fallback: return as is
+        return education
+
+    def _education_to_pl_key(self, education: str | None) -> str | None:
+        """Normalize education to PL key for internal comparisons."""
+        if not education:
+            return None
+        edu_lower = education.lower()
+        if edu_lower in EDUCATION_EN_TO_PL:
+            return EDUCATION_EN_TO_PL[edu_lower]
+        if edu_lower in EDUCATION_PL_TO_EN:
+            return edu_lower
+        return edu_lower
+
+    def _education_meets_min(self, education: str, min_education: str) -> bool:
+        hierarchy = ["podstawowe", "zasadnicze zawodowe", "średnie", "policealne", "wyższe"]
+        if education not in hierarchy or min_education not in hierarchy:
+            return True
+        return hierarchy.index(education) >= hierarchy.index(min_education)
+
+    def _occupation_to_pl(self, occupation: str | None) -> str | None:
+        if not occupation:
+            return None
+        if self.language == Language.PL:
+            return occupation
+        return OCCUPATION_EN_TO_PL.get(occupation, occupation)
 
     def _pick_location(self, lang: Language, location_type: str, region: str | None) -> str:
         candidates = list(LOCATIONS[lang][location_type])
@@ -634,7 +764,11 @@ class PersonaManager:
         location = self._pick_location(lang, location_type, region)
 
         # Select occupation appropriate for age (using population weights)
-        occupation_data = self._select_occupation_for_age(age, gender)
+        occupation_data = self._select_occupation_for_age(
+            age,
+            gender,
+            education_filter=profile.education,
+        )
         occupation = occupation_data["name"]
 
         # Determine income based on occupation and experience
@@ -653,9 +787,21 @@ class PersonaManager:
                 region=region,
             )
 
-        # Generate name, education from i18n data
+        # Generate name from i18n data
         name = random.choice(FIRST_NAMES[lang][gender])
-        education = random.choice(EDUCATION_LEVELS[lang])
+        
+        # Select education: use filter if provided, otherwise age-based distribution
+        if profile.education:
+            education = self._normalize_education(profile.education)
+        else:
+            raw_edu = self._select_education_for_age(age, occupation)
+            education = self._normalize_education(raw_edu)
+        
+        # Select marital status based on age (GUS NSP 2021)
+        marital_status = self._select_marital_status_for_age(age)
+        
+        # Determine if has children (GUS 2024)
+        has_children = self._select_has_children(age)
 
         return Persona(
             name=f"{name}_{index}",
@@ -666,6 +812,8 @@ class PersonaManager:
             location_type=location_type,
             education=education,
             occupation=occupation,
+            marital_status=marital_status,
+            has_children=has_children,
         )
 
     def _generate_persona_random(
@@ -704,7 +852,11 @@ class PersonaManager:
         location = self._pick_location(lang, location_type, region)
 
         # Select occupation appropriate for age (using population weights)
-        occupation_data = self._select_occupation_for_age(age, gender)
+        occupation_data = self._select_occupation_for_age(
+            age,
+            gender,
+            education_filter=profile.education,
+        )
         occupation = occupation_data["name"]
 
         # Determine income based on occupation and experience
@@ -723,9 +875,21 @@ class PersonaManager:
                 region=region,
             )
 
-        # Generate name, education
+        # Generate name from i18n data
         name = random.choice(FIRST_NAMES[lang][gender])
-        education = random.choice(EDUCATION_LEVELS[lang])
+        
+        # Select education: use filter if provided, otherwise age-based distribution
+        if profile.education:
+            education = self._normalize_education(profile.education)
+        else:
+            raw_edu = self._select_education_for_age(age, occupation)
+            education = self._normalize_education(raw_edu)
+        
+        # Select marital status based on age (GUS NSP 2021)
+        marital_status = self._select_marital_status_for_age(age)
+        
+        # Determine if has children (GUS 2024)
+        has_children = self._select_has_children(age)
 
         return Persona(
             name=f"{name}_{index}",
@@ -736,48 +900,71 @@ class PersonaManager:
             location_type=location_type,
             education=education,
             occupation=occupation,
+            marital_status=marital_status,
+            has_children=has_children,
         )
 
-    def _select_occupation_for_age(self, age: int, gender: str = "M") -> dict:
+    def _select_occupation_for_age(
+        self,
+        age: int,
+        gender: str = "M",
+        education_filter: str | None = None,
+    ) -> dict:
         """
-        Select a realistic occupation based on agent's age using population weights.
+        Select a realistic occupation based on agent's age and gender.
         
-        Uses GUS BAEL 2024 occupation distribution data to select occupations
-        with realistic frequency (e.g., more salespeople than doctors).
+        Uses GUS BAEL 2024 occupation distribution data combined with
+        gender-specific weights to create realistic occupational distribution.
         
-        Source: GUS BAEL 2024, ISCO-08 occupation groups
+        Example: mechanik has 97% male / 3% female distribution based on GUS data.
+        
+        Source: GUS BAEL 2024, ISCO-08 occupation groups, MEN 2024
         """
         lang = self.language
         valid_occupations = []
         weights = []
         
+        education_filter_pl = self._education_to_pl_key(education_filter)
         for occ in OCCUPATIONS[lang]:
             min_age = occ.get("min_age", 18)
             max_age = occ.get("max_age", 100)
             if min_age <= age <= max_age:
                 occ_name = occ.get("name", "")
+
+                if education_filter_pl:
+                    occ_name_pl = self._occupation_to_pl(occ_name) or occ_name
+                    min_education = get_min_education_for_occupation(occ_name_pl)
+                    if not self._education_meets_min(education_filter_pl, min_education):
+                        continue
                 
+                # Use PL names for weights so EN behaves like PL
+                occ_name_pl = self._occupation_to_pl(occ_name) or occ_name
                 # Get population weight from reference data
-                weight = OCCUPATION_POPULATION_WEIGHTS.get(occ_name, 0.01)
+                base_weight = OCCUPATION_POPULATION_WEIGHTS.get(occ_name_pl, 0.01)
+                
+                # Apply gender-specific weight modifier (GUS BAEL 2024)
+                gender_weight = get_occupation_gender_weight(occ_name_pl, gender)
+                weight = base_weight * gender_weight
                 
                 # Special handling for age-dependent statuses
-                if occ_name == "student" and 18 <= age <= 27:
+                if occ_name_pl == "student" and 18 <= age <= 27:
                     # Students are common in 18-27 age group
-                    weight = 0.30 if age <= 24 else 0.10
-                elif occ_name == "emeryt":
-                    # Retirees become more common with age
-                    if age >= 75:
-                        weight = 0.90
-                    elif age >= 70:
-                        weight = 0.75
-                    elif age >= 65:
-                        weight = 0.50
-                    elif age >= 60:
-                        weight = 0.20
+                    weight = (0.30 if age <= 24 else 0.10) * gender_weight
+                elif occ_name_pl == "emeryt":
+                    # Retirees become more common with age, gender-specific threshold
+                    retirement_age = RETIREMENT_AGE_BY_GENDER.get(gender, 65)
+                    if age >= retirement_age + 10:
+                        weight = 0.90 * gender_weight
+                    elif age >= retirement_age + 5:
+                        weight = 0.75 * gender_weight
+                    elif age >= retirement_age:
+                        weight = 0.50 * gender_weight
+                    elif age >= retirement_age - 5:
+                        weight = 0.20 * gender_weight
                     else:
                         weight = 0.0
-                elif occ_name == "rencista":
-                    weight = 0.02  # ~2% of 35+ population
+                elif occ_name_pl == "rencista":
+                    weight = 0.02 * gender_weight  # ~2% of 35+ population
                 
                 valid_occupations.append(occ)
                 weights.append(weight)
@@ -794,6 +981,68 @@ class PersonaManager:
         normalized_weights = [w / total_weight for w in weights]
         
         return random.choices(valid_occupations, weights=normalized_weights)[0]
+
+    def _select_education_for_age(self, age: int, occupation: str) -> str:
+        """
+        Select education level based on age distribution and occupation requirements.
+        
+        Uses GUS NSP 2021 data for age-based distribution and respects occupation
+        minimum requirements. Implements overqualification (20% work below qualifications).
+        
+        Source: GUS NSP 2021, CBOS 2024
+        """
+        # Get age-based education distribution
+        edu_distribution = get_education_distribution_for_age(age)
+        
+        # Get minimum education for occupation
+        min_education = get_min_education_for_occupation(occupation)
+        
+        # Education level hierarchy for comparison
+        edu_hierarchy = ["podstawowe", "zasadnicze zawodowe", "średnie", "policealne", "wyższe"]
+        min_idx = edu_hierarchy.index(min_education) if min_education in edu_hierarchy else 0
+        
+        # Sample from distribution first
+        education = random.choices(
+            list(edu_distribution.keys()),
+            weights=list(edu_distribution.values()),
+        )[0]
+        
+        # Check if education meets occupation requirements
+        edu_idx = edu_hierarchy.index(education) if education in edu_hierarchy else 0
+        
+        if edu_idx < min_idx:
+            # Person doesn't have enough education for this occupation
+            # Either they're overqualified (working below their level) or we need to adjust
+            if random.random() < OVERQUALIFICATION_RATE:
+                # They're actually overqualified but working in simpler job
+                # Keep higher education from distribution
+                pass
+            else:
+                # Adjust education to match occupation minimum
+                education = min_education
+        
+        return education
+
+    def _select_marital_status_for_age(self, age: int) -> str:
+        """
+        Select marital status based on age distribution.
+        
+        Source: GUS NSP 2021, Tablica 3.8
+        """
+        status_distribution = get_marital_status_distribution_for_age(age)
+        return random.choices(
+            list(status_distribution.keys()),
+            weights=list(status_distribution.values()),
+        )[0]
+
+    def _select_has_children(self, age: int) -> bool:
+        """
+        Determine if persona has children based on age probability.
+        
+        Source: GUS 2024 demographic data
+        """
+        probability = get_has_children_probability(age)
+        return random.random() < probability
 
     def _calculate_income(
         self, 
